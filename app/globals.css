@@ -1,0 +1,404 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+/*
+ ---break---
+ */
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * ═══════════════════════════════════════════════════════════════════════
+ *  نظام التصميم — Tailwind v4 (‏CSS-first، بلا tailwind.config.js)
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * ── لماذا سلالم لا ألوان مفردة ──────────────────────────────────────
+ * كان لكل معنى رمز واحد (`--color-line`, `--color-ink-muted`)، فكل حاجة
+ * إلى درجة بينهما تُحلّ بـ`/10` أو `/60` مرتجلاً — وينتج عن ذلك رماديان
+ * مختلفان لنفس المعنى في شاشتين. السلّم يعطي **درجات مسمّاة** تُنتقى ولا
+ * تُخترع.
+ *
+ * القيم مأخوذة من لوحة Untitled UI (التي يبني عليها TailAdmin): مُعايَرة
+ * للتباين، ودرجاتها متساوية الإدراك — وهو ما لا يعطيه تدرّج مولَّد آلياً.
+ *
+ * ── وما يبقى من عندنا ───────────────────────────────────────────────
+ * §11.2 يثبّت **لغة لون لكل محور حالة** (سكن · إنشاء · مال). تلك تبقى
+ * كما هي دلالةً، لكنها تُسنَد الآن إلى درجات السلالم بدل قيم مستقلّة —
+ * فيتّحد الأخضر في كل موضع يعني «تمام».
+ */
+
+@theme {
+  --font-sans: var(--font-arabic), "Segoe UI", system-ui, sans-serif;
+
+  /* ══ سلّم الرمادي ═══════════════════════════════════════════════ */
+  /* الأبيض رمزٌ لا حرفٌ — كي يبقى الجسر مُسنِداً لا مُعرِّفاً */
+  --color-white: #ffffff;
+
+  --color-gray-25: #fcfcfd;
+  --color-gray-50: #f9fafb;
+  --color-gray-100: #f2f4f7;
+  --color-gray-200: #e4e7ec;
+  --color-gray-300: #d0d5dd;
+  --color-gray-400: #98a2b3;
+  --color-gray-500: #667085;
+  --color-gray-600: #475467;
+  --color-gray-700: #344054;
+  --color-gray-800: #1d2939;
+  --color-gray-900: #101828;
+  --color-gray-950: #0c111d;
+  --color-gray-dark: #1a2231;
+
+  /* ══ سلّم العلامة ═══════════════════════════════════════════════ */
+  --color-brand-25: #f2f7ff;
+  --color-brand-50: #ecf3ff;
+  --color-brand-100: #dde9ff;
+  --color-brand-200: #c2d6ff;
+  --color-brand-300: #9cb9ff;
+  --color-brand-400: #7592ff;
+  --color-brand-500: #465fff;
+  --color-brand-600: #3641f5;
+  --color-brand-700: #2a31d8;
+  --color-brand-800: #252dae;
+  --color-brand-900: #262e89;
+  --color-brand-950: #161950;
+
+  /* ══ سلالم الحالات ══════════════════════════════════════════════ */
+  --color-success-25: #f6fef9;
+  --color-success-50: #ecfdf3;
+  --color-success-100: #d1fadf;
+  --color-success-200: #a6f4c5;
+  --color-success-400: #32d583;
+  --color-success-500: #12b76a;
+  --color-success-600: #039855;
+  --color-success-700: #027a48;
+
+  --color-error-25: #fffbfa;
+  --color-error-50: #fef3f2;
+  --color-error-100: #fee4e2;
+  --color-error-200: #fecdca;
+  --color-error-400: #f97066;
+  --color-error-500: #f04438;
+  --color-error-600: #d92d20;
+  --color-error-700: #b42318;
+
+  --color-warning-25: #fffcf5;
+  --color-warning-50: #fffaeb;
+  --color-warning-100: #fef0c7;
+  --color-warning-200: #fedf89;
+  --color-warning-400: #fdb022;
+  --color-warning-500: #f79009;
+  --color-warning-600: #dc6803;
+  --color-warning-700: #b54708;
+
+  /* أزرق فاتح — متمايز عن العلامة كي لا يعني «أزرق» شيئين في شاشة */
+  --color-sky-50: #f0f9ff;
+  --color-sky-100: #e0f2fe;
+  --color-sky-400: #36bffa;
+  --color-sky-500: #0ba5ec;
+  --color-sky-600: #0086c9;
+  --color-sky-700: #026aa2;
+
+  /* ══ سلّم الخطّ ═════════════════════════════════════════════════
+   * أحجام **مسمّاة بارتفاع سطرها**. الحجم بلا ارتفاع سطر يجعل العناوين
+   * الكبيرة متلاصقة والصغيرة متباعدة، ويُصلَح في كل موضع على حدة.
+   */
+  --text-title-lg: 30px;
+  --text-title-lg--line-height: 38px;
+  --text-title-md: 24px;
+  --text-title-md--line-height: 32px;
+  --text-title-sm: 20px;
+  --text-title-sm--line-height: 28px;
+  --text-theme-xl: 20px;
+  --text-theme-xl--line-height: 30px;
+  --text-theme-sm: 14px;
+  --text-theme-sm--line-height: 20px;
+  --text-theme-xs: 12px;
+  --text-theme-xs--line-height: 18px;
+
+  /* ══ سلّم الظلّ ═════════════════════════════════════════════════
+   * ⚠️ مصبوغ بـ`gray-900` لا بالأسود. الظلّ الأسود على سطح ملوّن يبدو
+   * متّسخاً؛ والمصبوغ بلون الحبر يبدو ضوءاً حقيقياً.
+   *
+   * ⚠️ **والبطاقات لا تحمل ظلّاً افتراضياً.** الحدّ الشعري فوق أرضية
+   * أبرد يكفي، والظلّ الدائم على كل بطاقة يُنتج ضجيجاً بصرياً في شاشة
+   * كثيفة. الظلّ محجوز للطبقات العائمة: القوائم والحوارات والتحويم.
+   */
+  --shadow-theme-xs: 0 1px 2px 0 rgb(16 24 40 / 0.05);
+  --shadow-theme-sm: 0 1px 3px 0 rgb(16 24 40 / 0.1), 0 1px 2px 0 rgb(16 24 40 / 0.06);
+  --shadow-theme-md: 0 4px 8px -2px rgb(16 24 40 / 0.1), 0 2px 4px -2px rgb(16 24 40 / 0.06);
+  --shadow-theme-lg: 0 12px 16px -4px rgb(16 24 40 / 0.08), 0 4px 6px -2px rgb(16 24 40 / 0.03);
+  --shadow-theme-xl: 0 20px 24px -4px rgb(16 24 40 / 0.08), 0 8px 8px -4px rgb(16 24 40 / 0.03);
+  --shadow-focus-ring: 0 0 0 4px rgb(70 95 255 / 0.12);
+
+  /* ══ الأسطح — مُسنَدة إلى السلالم ══════════════════════════════ */
+  --color-canvas: var(--color-gray-50);
+  --color-surface: var(--color-white);
+  --color-surface-muted: var(--color-gray-100);
+  --color-line: var(--color-gray-200);
+  --color-line-soft: var(--color-gray-100);
+  --color-ink: var(--color-gray-800);
+  --color-ink-muted: var(--color-gray-500);
+
+  --color-accent-brand: var(--color-brand-500);
+  --color-accent-brand-soft: var(--color-brand-50);
+  /*
+   * درجة أغمق **للنصّ فوق `accent-brand-soft`**.
+   *
+   * قياس التباين أعطى `brand-500` على `brand-50` = **4.34:1** — تحت حدّ
+   * ‏AA (4.5:1) بفارق ضئيل لا تراه العين ويراه الفحص. والدرجة 600 ترفعه
+   * إلى نحو 5.8:1.
+   *
+   * ولا يُستعمل هذا الرمز للأزرار: `brand-500` على أبيض يمرّ بمريح.
+   */
+  --color-accent-brand-strong: var(--color-brand-600);
+
+  /* ══ محاور §11.2 — الدلالة كما هي، والدرجات من السلالم ═════════ */
+
+  /* السكن */
+  --color-occupancy-vacant: var(--color-gray-400);   /* رمادي */
+  --color-occupancy-owner: var(--color-success-500); /* أخضر  */
+  --color-occupancy-tenant: var(--color-sky-500);    /* أزرق  */
+
+  /* الإنشاء */
+  --color-construction-under: var(--color-warning-500);  /* كهرماني */
+  --color-construction-done: var(--color-success-500);   /* أخضر    */
+  --color-construction-delivered: var(--color-success-600); /* أخضر أعمق */
+
+  /* المال */
+  --color-money-overdue: var(--color-error-500);   /* أحمر    */
+  --color-money-pending: var(--color-warning-500); /* كهرماني */
+  --color-money-paid: var(--color-success-500);    /* أخضر    */
+}
+
+/*
+ * ── الوضع الليلي ────────────────────────────────────────────────────
+ *
+ * ⚠️ **`:root` لا `@theme`.** ‏Tailwind v4 **يرفع `@theme` خارج
+ * `@media`**، فتُكتب قيم الليل فوق قيم النهار بلا شرط — والتطبيق يصير
+ * داكناً دائماً. كُشف بقراءة CSS المولَّد لا بالنظر.
+ */
+/*
+ * ═══════════════════════════════════════════════════════════════════════
+ *  الوضع الليلي
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * ── ثلاث حالات لا حالتان ────────────────────────────────────────────
+ * المستخدم قد **يختار** فاتحاً أو داكناً، أو يترك الأمر لنظامه. فالقيم
+ * تُطبَّق من موضعين:
+ *   • `@media (prefers-color-scheme: dark)` مقيَّداً بـ`:not([data-theme=light])`
+ *     — تفضيل النظام، ما لم يختر المستخدم الفاتح صراحةً.
+ *   • `:root[data-theme="dark"]` — اختياره الصريح، يتغلّب على النظام.
+ *
+ * ⚠️ **`:root` لا `@theme`.** ‏Tailwind v4 **يرفع `@theme` خارج
+ * `@media`**، فتُكتب قيم الليل فوق قيم النهار بلا شرط — والتطبيق يصير
+ * داكناً دائماً. كُشف بقراءة CSS المولَّد لا بالنظر.
+ *
+ * ⚠️ **والكتلتان مكرَّرتان عن قصد، لا سهواً.** ‏CSS لا يسمح بقائمة
+ * مُحدِّدات تعبر حدّ `@media`، ولا بإعادة استعمال كتلة إعلانات. والخطر
+ * الحقيقي هو **انحرافهما**: رمزٌ يُضاف في إحداهما وحدها فيختلف الداكن
+ * الصريح عن الداكن التلقائي. اختبار في `tests/unit/ui-rtl.test.ts` يقارن
+ * مجموعتَي الرموز ويفشل عند أول انحراف.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-canvas: var(--color-gray-950);
+    --color-surface: var(--color-gray-dark);
+    --color-surface-muted: #232a38;
+    --color-line: #2a3345;
+    --color-line-soft: #232a38;
+    --color-ink: var(--color-gray-25);
+    --color-ink-muted: var(--color-gray-400);
+
+    --color-accent-brand: var(--color-brand-400);
+    --color-accent-brand-soft: rgb(70 95 255 / 0.14);
+    --color-accent-brand-strong: var(--color-brand-400);
+
+    /* ‏brand-50 فاتح جداً على أرضية داكنة — يُستبدل بشفافية العلامة */
+    --color-brand-50: rgb(70 95 255 / 0.14);
+
+
+
+    --color-occupancy-vacant: var(--color-gray-500);
+    --color-occupancy-owner: var(--color-success-400);
+    --color-occupancy-tenant: var(--color-sky-400);
+    --color-construction-under: var(--color-warning-400);
+    --color-construction-done: var(--color-success-400);
+    --color-construction-delivered: var(--color-success-500);
+    --color-money-overdue: var(--color-error-400);
+    --color-money-pending: var(--color-warning-400);
+    --color-money-paid: var(--color-success-400);
+
+    /* الظلّ لا يُرى على أرضية داكنة — يُخفَّف ويُترك للطبقات العائمة */
+    --shadow-theme-md: 0 4px 8px -2px rgb(0 0 0 / 0.4);
+    --shadow-theme-lg: 0 12px 16px -4px rgb(0 0 0 / 0.45);
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-canvas: var(--color-gray-950);
+  --color-surface: var(--color-gray-dark);
+  --color-surface-muted: #232a38;
+  --color-line: #2a3345;
+  --color-line-soft: #232a38;
+  --color-ink: var(--color-gray-25);
+  --color-ink-muted: var(--color-gray-400);
+
+  --color-accent-brand: var(--color-brand-400);
+  --color-accent-brand-soft: rgb(70 95 255 / 0.14);
+  --color-accent-brand-strong: var(--color-brand-400);
+
+  /* ‏brand-50 فاتح جداً على أرضية داكنة — يُستبدل بشفافية العلامة */
+  --color-brand-50: rgb(70 95 255 / 0.14);
+
+
+
+  --color-occupancy-vacant: var(--color-gray-500);
+  --color-occupancy-owner: var(--color-success-400);
+  --color-occupancy-tenant: var(--color-sky-400);
+  --color-construction-under: var(--color-warning-400);
+  --color-construction-done: var(--color-success-400);
+  --color-construction-delivered: var(--color-success-500);
+  --color-money-overdue: var(--color-error-400);
+  --color-money-pending: var(--color-warning-400);
+  --color-money-paid: var(--color-success-400);
+
+  /* الظلّ لا يُرى على أرضية داكنة — يُخفَّف ويُترك للطبقات العائمة */
+  --shadow-theme-md: 0 4px 8px -2px rgb(0 0 0 / 0.4);
+  --shadow-theme-lg: 0 12px 16px -4px rgb(0 0 0 / 0.45);
+}
+
+html {
+  /* عناصر المتصفّح الأصلية — شرائط التمرير ومنتقيات التاريخ — تتّبع
+     السمة. بدونه يبقى شريط التمرير أبيض على صفحة داكنة. */
+  color-scheme: light;
+  /* الأرقام غربية دائماً — تصحيح T4. §11.1 قاعدة معيارية صريحة،
+     والمثال بالأرقام الهندية في §9.1 خطأ عابر. */
+  font-variant-numeric: tabular-nums;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/*
+ * ⚠️ **هذه القاعدة تتغلّب على أدوات Tailwind.**
+ * قواعد خارج `@layer` تسبق المُطبَّقة داخلها، فـ`bg-background` على
+ * `<body>` كان لا أثر له وتبقى الصفحة بيضاء مهما تغيّر الرمز. اكتُشف
+ * بقياس اللون المحسوب لا بالنظر.
+ */
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+/*
+ * الأيقونات الاتجاهية تُقلب في RTL (‏§11.1).
+ * مكوّن واحد يحمل هذا الصنف بدل تكرار `rotate-180` في كل موضع —
+ * والتكرار هو ما ينسى أحدهم فيظهر سهم مقلوب في شاشة واحدة.
+ */
+[dir="rtl"] .icon-directional {
+  transform: scaleX(-1);
+}
+
+/*
+ * ═══════════════════════════════════════════════════════════════════════
+ *  جسر رموز shadcn/ui  →  لوحتنا الدلالية
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * مكوّنات shadcn تشير إلى `--color-primary` و`--color-border` وأخواتها.
+ * بدل تعريف لوحة ثانية موازية — فتنشأ رماديتان مختلفتان لنفس المعنى —
+ * نُسنِد رموزها إلى رموزنا القائمة.
+ *
+ * `inline` مقصود: تُدرَج `var(--color-…)` نفسها داخل الأدوات، فترث
+ * تلقائياً تجاوزَ الوضع الليلي في `@media` أعلاه.
+ */
+@theme inline {
+  --color-background: var(--color-canvas);
+  --color-foreground: var(--color-ink);
+
+  --color-card: var(--color-surface);
+  --color-card-foreground: var(--color-ink);
+  --color-popover: var(--color-surface);
+  --color-popover-foreground: var(--color-ink);
+
+  /*
+   * ⚠️ الإجراء الأساسي صار **لون العلامة** لا الحبر.
+   * زرٌّ أسود يقول «هذا زرّ»؛ وزرٌّ بلون العلامة يقول «هذا **الفعل**».
+   * والفرق يظهر في شاشة فيها ستّة أزرار: واحد منها هو المقصود.
+   */
+  --color-primary: var(--color-brand-500);
+  --color-primary-foreground: var(--color-white);
+
+  --color-secondary: var(--color-surface-muted);
+  --color-secondary-foreground: var(--color-ink);
+  --color-muted: var(--color-surface-muted);
+  --color-muted-foreground: var(--color-ink-muted);
+  --color-accent: var(--color-surface-muted);
+  --color-accent-foreground: var(--color-ink);
+
+  /* الهدم يستعير أحمر «متأخّر» — لغة لون واحدة للخطر في كل النظام */
+  --color-destructive: var(--color-money-overdue);
+  --color-destructive-foreground: var(--color-white);
+
+  /*
+   * ── رموز الشريط الجانبي (‏shadcn sidebar) ─────────────────────────
+   *
+   * ⚠️ **سطحه غير سطح البطاقة عمداً.** الشريط ثابت والمحتوى متحرّك؛
+   * ولو تشابه لونهما لبدت الصفحة كتلةً واحدة مقسّمة بخطّ. الشريط أبيض
+   * (سطح) والمحتوى على القماش الأبرد — فتُقرأ الطبقتان بلا إطار ثقيل.
+   *
+   * و`sidebar-accent` هو **تعبئة البند النشط** — `brand-50` لا رمادي:
+   * الرمادي يقول «مرَّرتُ فوقه»، ولون العلامة يقول «أنت هنا».
+   */
+  /*
+   * ⚠️ **`accent-brand` لا `brand-500` مباشرةً.** الرمز `--color-accent-brand`
+   * ينقلب إلى `brand-400` في الوضع الليلي؛ والدرجة 500 لا تنقلب. وقياسُ
+   * التباين على الأرضية الداكنة أعطى **3.2:1** لنصّ البند النشط — تحت
+   * حدّ 4.5:1، أي نصٌّ باهت لا يُقرأ. والإسناد إلى الرمز المنقلب يرفعه
+   * إلى نحو 5.5:1 بلا استثناء يدوي.
+   */
+  --color-sidebar: var(--color-surface);
+  --color-sidebar-foreground: var(--color-ink);
+  --color-sidebar-primary: var(--color-accent-brand);
+  --color-sidebar-primary-foreground: var(--color-white);
+  --color-sidebar-accent: var(--color-accent-brand-soft);
+  --color-sidebar-accent-foreground: var(--color-accent-brand-strong);
+  --color-sidebar-border: var(--color-line);
+  --color-sidebar-ring: var(--color-accent-brand);
+
+  --color-border: var(--color-line);
+  --color-input: var(--color-line);
+  --color-ring: var(--color-brand-500);
+}
+
+/*
+ * ═══════════════════════════════════════════════════════════════════════
+ *  طبقة الأساس التي يفترضها shadcn
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * ⚠️ **بدونها كل حدود النظام خاطئة.** في Tailwind v4 لم يعد `border`
+ * المجرّد يأخذ رمادياً افتراضياً، بل يرث `currentColor` — أي **لون
+ * النصّ**. فكل بطاقة وجدول وحقل كان يُرسم بحدٍّ بلون الحبر الكامل.
+ *
+ * لم يكشف العيب اختبار ولا بناء ولا فحص أنواع: الأصناف صحيحة والقيمة
+ * صحيحة، والخطأ في **الافتراضي**. كُشِف بقياس اللون المحسوب في المتصفّح.
+ */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop {
+    border-color: var(--color-border);
+  }
+  * {
+    outline-color: color-mix(in oklab, var(--color-ring) 50%, transparent);
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}

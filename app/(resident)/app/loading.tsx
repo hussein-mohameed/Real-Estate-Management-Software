@@ -1,0 +1,16 @@
+import { Skeleton } from "@/components/ui/skeleton";
+
+/** شكل صفحة الساكن: بطاقة رصيد كبيرة ثم بطاقة وحدة. */
+export default function Loading() {
+  return (
+    <div className="flex flex-col gap-6" aria-busy="true" aria-live="polite">
+      <span className="sr-only">جارٍ التحميل…</span>
+      <div className="flex flex-col gap-2">
+        <Skeleton className="h-6 w-48" />
+        <Skeleton className="h-4 w-24" />
+      </div>
+      <Skeleton className="h-28 rounded-lg" />
+      <Skeleton className="h-64 rounded-lg" />
+    </div>
+  );
+}

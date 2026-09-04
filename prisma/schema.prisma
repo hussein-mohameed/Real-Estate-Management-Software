@@ -1,0 +1,1243 @@
+// ═══════════════════════════════════════════════════════════════════════
+//  مخطّط قاعدة البيانات — نظام إدارة المجمّع السكني
+//
+//  ⚠️ يُكتب **مرة واحدة كاملاً** لا تدريجياً (AGENTS.md · §4.3 من خطة الجسر).
+//     كل migration تصحيحية بعد دخول بيانات حقيقية أغلى بمراتب.
+//
+//  المصادر المدمجة هنا:
+//    • مخطّط §5 من spec.md
+//    • تصحيحات المواصفة S1–S9
+//    • القرارات الافتراضية Q3–Q46 (خطة الجسر §2.2)
+//    • القرارات الفنية T1–T10
+//    • نتائج التحقّق المستقل V1–V11
+//
+//  ── ما ليس هنا عمداً ─────────────────────────────────────────────────
+//  القيود التي لا يعبّر عنها Prisma (الفهارس الفريدة **الجزئية** وقيود
+//  CHECK) مكتوبة بيدي في migration خام. الفهرس الكامل يُنتج سلوكاً خاطئاً:
+//  مثلاً @unique على plateNumber يمنع تسجيل سيارة أُزيلت من جديد (S7)،
+//  و@@unique على Apartment يجعل إعادة التوليد بعد حذف ناعم تفشل (T1).
+//
+//  ── الاتصال ───────────────────────────────────────────────────────────
+//  في Prisma 7 لا يحمل datasource حقل url — الاتصال في prisma.config.ts.
+//  راجع docs/00-STACK-VERIFIED.md §3.2.
+// ═══════════════════════════════════════════════════════════════════════
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  الـenums
+//  ⚠️ تطابق lib/domain/enums.ts قيمةً بقيمة، ويؤكّد التطابق
+//     `npm run audit:completeness` — فلا يتفرّق المصدران بصمت.
+// ═══════════════════════════════════════════════════════════════════════
+
+enum UserRole {
+  OWNER
+  ADMIN
+  STAFF
+  RESIDENT
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum EmploymentType {
+  INTERNAL
+  FREELANCE
+  VENDOR
+}
+
+enum SkillLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+enum NumberingScheme {
+  SEQUENTIAL
+  PER_FLOOR
+}
+
+enum ConstructionStatus {
+  UNDER_CONSTRUCTION
+  COMPLETED
+  DELIVERED
+}
+
+enum OwnershipStatus {
+  UNSOLD
+  SOLD
+  RENTED_BY_COMPANY
+}
+
+enum OccupancyStatus {
+  VACANT
+  OCCUPIED_BY_OWNER
+  OCCUPIED_BY_TENANT
+}
+
+// Q32: CONTRACT_HOLDER محذوف — كان يكرّر isContractHolder على نفس الصف
+// ويمكن أن يناقضه. القرابة وحدها هنا، والدور يحمله الـboolean الذي تبنى
+// عليه الفهارس الفريدة الجزئية.
+enum ResidentRelation {
+  FAMILY_MEMBER
+  OTHER
+}
+
+enum ContractType {
+  SALE
+  RENTAL
+}
+
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  EXPIRED
+  TERMINATED
+}
+
+enum PaymentType {
+  FULL
+  INSTALLMENTS
+}
+
+enum PlanStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum InstallmentStatus {
+  PENDING
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum ServiceBillingType {
+  RECURRING
+  ONE_TIME
+}
+
+enum BillingCycle {
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+enum PricingModel {
+  FLAT
+  PER_UNIT
+  PER_PERSON
+}
+
+enum PayerType {
+  OWNER
+  OCCUPANT
+}
+
+// Q6: الـenum الواحد كان مشتركاً بين حقلين بمجالَي قيم مختلفين.
+// Service.appliesTo يقبل BOTH · Subscription.subjectType لا يجوز أن يساويه أبداً.
+enum ServiceAppliesTo {
+  APARTMENT
+  RESIDENT
+  BOTH
+}
+
+enum SubscriptionSubjectType {
+  APARTMENT
+  RESIDENT
+}
+
+enum SubscriptionStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  PAUSED
+  CANCELLED
+}
+
+enum AccountStatus {
+  OPEN
+  CLOSED
+}
+
+// D2/4: ADJUSTMENT تبقى مطابقةً لـ§5، لكن **مسار الكتابة يرفضها**.
+// التسوية قيد CHARGE/PAYMENT بمصدر MANUAL وسبب إلزامي، فصيغة الرصيد
+// تصير Σ CHARGE − Σ PAYMENT بلا أي فرع للإشارة.
+enum LedgerEntryType {
+  CHARGE
+  PAYMENT
+  ADJUSTMENT
+}
+
+enum LedgerSource {
+  SUBSCRIPTION
+  ONE_TIME_SERVICE
+  INSTALLMENT
+  RENT
+  BADGE
+  MANUAL
+  OPENING // N3 — الأرصدة الافتتاحية عند ترحيل الوضع القائم
+}
+
+enum PaymentMethod {
+  CASH_AT_CENTER
+  WAYL_LINK
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  EXPIRED
+  CANCELLED
+}
+
+enum VehicleStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  REMOVED
+}
+
+enum BadgeStatus {
+  REQUESTED
+  ISSUED
+  REVOKED
+  EXPIRED
+}
+
+enum RequestType {
+  SERVICE_REQUEST
+  COMPLAINT
+}
+
+// Q35: شكوى المصعد أو المسبح أو البوّابة لا تنتمي لشقة.
+// ⚠️ نصّ ملزم: طلب COMMON_AREA **لا يمنح أي وصول لأي شقة** ويُستثنى صراحةً
+// من requireApartmentAccess (راجع lib/auth/access.ts).
+enum RequestScope {
+  APARTMENT
+  COMMON_AREA
+}
+
+enum RequestStatus {
+  NEW
+  ASSIGNED
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum Priority {
+  LOW
+  NORMAL
+  HIGH
+}
+
+// Q37: نموذج عام واحد يخدم مسارات طلب الساكن الثلاثة التي يَعِد بها النص
+// (§3.3 · §8.4) ولا وجود لها في المخطّط ولا في الإجراءات.
+enum ResidentRequestKind {
+  BADGE
+  SUBSCRIPTION_CANCELLATION
+  PROFILE_CHANGE
+}
+
+enum ResidentRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum NotificationChannel {
+  WHATSAPP
+  IN_APP
+}
+
+// حالة **الإرسال** لا القراءة. حالة القراءة يحملها readAt (Q44) — وبدونه
+// كان جرس الإخطارات في §11.2 زخرفة لا تعمل.
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+// Q17: عدّاد الترقيم السنوي — تسلسل Postgres لا يُصفَّر سنوياً تلقائياً.
+enum CounterKind {
+  INV
+  CTR
+  REQ
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  الإعدادات
+// ═══════════════════════════════════════════════════════════════════════
+
+model CompoundSettings {
+  id                            String   @id // دائماً "singleton"
+  name                          String
+  logoUrl                       String?
+  address                       String?
+  phone                         String?
+  invoicePrefix                 String   @default("INV")
+  billingDayOfMonth             Int      @default(1)
+  currency                      String   @default("IQD")
+  defaultBadgeFeeIqd            BigInt?
+  // T2: موجود في مخطّط §5 ومفقود من جدول حقول §4.1 — §5 هو المرجع المعلن.
+  installmentReminderDaysBefore Int      @default(3)
+  updatedAt                     DateTime @updatedAt
+
+  // ملاحظة فنية 4: بلا createdAt عمداً — صفّ واحد يُنشأ بالبذرة ولا يتكرّر.
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  الهوية
+// ═══════════════════════════════════════════════════════════════════════
+
+model User {
+  id              String    @id @default(cuid())
+  supabaseUserId  String?   @unique
+  fullName        String
+  // R3: مطبَّع إلى E.164 قبل أي إدخال أو بحث.
+  phone           String    @unique
+  email           String?   @unique
+  avatarUrl       String?
+  gender          Gender?
+  role            UserRole
+  // R2: لا حذف صلب. وهذا العلم هو **آلية منع الدخول الوحيدة** (§10.1).
+  isActive        Boolean   @default(true)
+  lastLoginAt     DateTime?
+  createdByUserId String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  createdBy    User?  @relation("UserCreatedBy", fields: [createdByUserId], references: [id])
+  createdUsers User[] @relation("UserCreatedBy")
+
+  residentProfile        ResidentProfile?
+  staffProfile           StaffProfile?
+  apartmentLinks         ApartmentResident[]
+  heldContracts          Contract[]          @relation("ContractHolder")
+  ownedAccounts          Account[]           @relation("AccountHolder")
+  ownedVehicles          Vehicle[]           @relation("VehicleOwner")
+  managedDepartments     Department[]        @relation("DepartmentManager")
+  createdRequests        ServiceRequest[]    @relation("RequestCreator")
+  requestComments        RequestComment[]
+  residentRequests       ResidentRequest[]   @relation("ResidentRequestCreator")
+  reviewedRequests       ResidentRequest[]   @relation("ResidentRequestReviewer")
+  subscriptionsRequested Subscription[]      @relation("SubscriptionRequestedBy")
+  subscriptionsApproved  Subscription[]      @relation("SubscriptionApprovedBy")
+  residentSubscriptions  Subscription[]      @relation("SubscriptionResident")
+  ledgerEntries          LedgerEntry[]       @relation("LedgerCreatedBy")
+  receivedPayments       Payment[]           @relation("PaymentReceivedBy")
+  cashDrawerSessions     CashDrawerSession[] @relation("CashDrawerStaff")
+  closedCashDrawers      CashDrawerSession[] @relation("CashDrawerClosedBy")
+  issuedBadges           Badge[]             @relation("BadgeIssuedBy")
+  uploadedAttachments    Attachment[]
+  notifications          Notification[]
+  auditEntries           AuditLog[]
+  loginLinks             LoginLink[]
+
+  @@index([role, isActive])
+}
+
+model ResidentProfile {
+  userId                String   @id
+  // R4: bucket خاص + رابط موقَّع 5 دقائق. §12.1 يصنّفهما بيانات شخصية حسّاسة:
+  // لا تُسجَّل في التدقيق ولا تُرسل بالبريد ولا تُدرج في أي تصدير.
+  nationalIdImageUrl    String?
+  residenceCardImageUrl String?
+  emergencyPhone        String?
+  notes                 String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  // R6: «هل تمتلك سيارة؟» و«هل عندك باج؟» **ليست حقولاً** — تُشتقّ من
+  // Vehicle و Badge. تخزينها boolean يُنتج تناقضاً حتمياً مع الجدولين.
+}
+
+model StaffProfile {
+  userId         String         @id
+  employmentType EmploymentType
+  // إلزامي عندما employmentType = VENDOR — شرط مشروط لا يعبّر عنه Prisma،
+  // يُفرض في zod + فحص خادم (الخطوة 1.8).
+  vendorId       String?
+  departmentId   String?
+  isAvailable    Boolean        @default(true)
+  jobTitle       String?
+  hiredAt        DateTime?
+  // B4: العمود مقرَّر بنصّ 20-schema.md. **السياسة** (من يُمنح العلم وبأي
+  // ضابط إقفال يومي) هي المحجوبة — لا العمود. الافتراضي false: لا أحد
+  // يقبض نقداً حتى يُمنح صراحةً.
+  canReceiveCash Boolean        @default(false)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  user                 User             @relation(fields: [userId], references: [id])
+  vendor               Vendor?          @relation(fields: [vendorId], references: [id])
+  department           Department?      @relation(fields: [departmentId], references: [id])
+  skills               StaffSkill[]
+  assignedRequests     ServiceRequest[] @relation("RequestAssignee")
+  followUpInstallments Installment[]    @relation("InstallmentFollowUp")
+
+  @@index([departmentId])
+  @@index([vendorId])
+  @@index([isAvailable])
+  @@index([canReceiveCash])
+}
+
+model Vendor {
+  id            String   @id @default(cuid())
+  name          String
+  contactPerson String?
+  phone         String?
+  specialty     String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  staff StaffProfile[]
+}
+
+model Department {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  description   String?
+  managerUserId String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  manager  User?            @relation("DepartmentManager", fields: [managerUserId], references: [id])
+  tasks    DepartmentTask[]
+  staff    StaffProfile[]
+  requests ServiceRequest[]
+
+  // §4.6: «الأشخاص» = عدد StaffProfile — **محسوب لا مخزَّن**.
+  @@index([managerUserId])
+}
+
+model DepartmentTask {
+  id           String   @id @default(cuid())
+  departmentId String
+  name         String
+  description  String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  department Department       @relation(fields: [departmentId], references: [id])
+  requests   ServiceRequest[]
+
+  @@unique([departmentId, name])
+  @@index([departmentId])
+}
+
+// §4.7 [DECIDED]: ملصقات فقط. لا كتالوج كورسات، لا تسجيل، لا شهادات.
+// مقاومة إغراء بناء وحدة تدريب هنا **مقصودة**.
+model Skill {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staffSkills StaffSkill[]
+}
+
+model StaffSkill {
+  id             String     @id @default(cuid())
+  staffProfileId String
+  skillId        String
+  level          SkillLevel
+  needsTraining  Boolean    @default(false)
+  hasTrained     Boolean    @default(false)
+  trainingNote   String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  staffProfile StaffProfile @relation(fields: [staffProfileId], references: [userId])
+  skill        Skill        @relation(fields: [skillId], references: [id])
+
+  @@unique([staffProfileId, skillId])
+  @@index([skillId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  العقار
+// ═══════════════════════════════════════════════════════════════════════
+
+model Building {
+  id                     String             @id @default(cuid())
+  code                   String             @unique
+  name                   String?
+  floorsCount            Int
+  unitsPerFloor          Int
+  numberingScheme        NumberingScheme
+  displayNumberFormat    String             @default("{building}-{floor}-{unit}")
+  plannedApartmentsCount Int?
+  // Q8: يبقى **حقلاً يدوياً يصف الهيكل نفسه**؛ والـroll-up من الشقق استعلام
+  // منفصل لا عمود — وإلا خُرق المبدأ 1.
+  constructionStatus     ConstructionStatus @default(UNDER_CONSTRUCTION)
+  notes                  String?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  apartments     Apartment[]
+  floorOverrides FloorUnitsOverride[]
+}
+
+// Q43 — «الطوابق الفردية قد تختلف» وعد في §4.8 والخوارزمية تستخدم
+// unitsPerFloor موحّداً لكل الطوابق. هذا الجدول يحمل التجاوزات.
+//
+// ⚠️ لا يناقض «لا جدول Floor» في §4.8: الطابق ليس كياناً هنا — لا مالك له
+// ولا كلفة ولا خدمة. الصفّ **مُدخَل توليد** فقط، ولهذا سُمّي بما يصفه.
+model FloorUnitsOverride {
+  id          String @id @default(cuid())
+  buildingId  String
+  floorNumber Int
+  unitsCount  Int
+
+  building Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+
+  @@unique([buildingId, floorNumber])
+  @@index([buildingId])
+}
+
+model Apartment {
+  id                  String   @id @default(cuid())
+  buildingId          String
+  floorNumber         Int
+  unitNumber          Int
+  // ما يراه الناس ويبحثون به. فريد داخل البناية.
+  displayNumber       String
+  // Q43: بعد أي تعديل يدوي **يُجمَّد** ولا يُعاد توليده — لأن seq يُحسب من
+  // unitsPerFloor الموحّد فتنكسر دلالة SEQUENTIAL بعد أي إضافة أو حذف.
+  displayNumberLocked Boolean  @default(false)
+  companyCode         String?
+  // الاستثناء الوحيد المسموح لـDecimal في النظام كله — مساحة لا مال.
+  areaSqm             Decimal? @db.Decimal(10, 2)
+  roomsCount          Int?
+
+  // ── المحاور الثلاثة المستقلة تماماً ─────────────────────────────────
+  // دمجها في enum واحد — الخطأ الشائع — يُفقد النظام قدرته على تمثيل
+  // «مباعة لكن فارغة» أو «مكتملة وغير مباعة».
+  constructionStatus   ConstructionStatus @default(UNDER_CONSTRUCTION)
+  completionPercentage Int?
+  ownershipStatus      OwnershipStatus    @default(UNSOLD)
+  occupancyStatus      OccupancyStatus    @default(VACANT)
+  occupancyChangedAt   DateTime?
+  // Q33: «التسليم» حدث تجاري له تاريخ — ولا تدفق ينقل COMPLETED → DELIVERED
+  // في المواصفة. هذا العمود + إجراء تسليم صريح يسدّان الفراغ.
+  deliveredAt          DateTime?
+
+  // Q30: سعر **معروض/إرشادي** لا حقيقة مالية. الحقيقة Contract.totalAmountIqd،
+  // وهي وحدها ما يدخل أي تقرير مالي — وإلا اختلف «إجمالي المبيعات» بحسب
+  // الحقل الذي قرأه كل تقرير.
+  priceIqd    BigInt?
+  paymentType PaymentType?
+
+  notes     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  // S3/Q4 · T1: الحذف الناعم هنا يخرق التفريد المركّب، فالتفريدان فهرسان
+  // **جزئيان** WHERE deletedAt IS NULL في migration خام — لا @@unique.
+  deletedAt DateTime?
+
+  building      Building            @relation(fields: [buildingId], references: [id])
+  residents     ApartmentResident[]
+  contracts     Contract[]
+  accounts      Account[]
+  subscriptions Subscription[]
+  vehicles      Vehicle[]
+  requests      ServiceRequest[]
+  attachments   Attachment[]
+
+  // Q33: tenureType **محذوف** — محور رابع لا تقرأه أي قاعدة ولا تدفق،
+  // ويتقاطع مع ownershipStatus و Contract.type. مشتقّ من نوع العقد النشط.
+
+  @@index([buildingId, floorNumber])
+  @@index([constructionStatus])
+  @@index([ownershipStatus])
+  @@index([occupancyStatus])
+  @@index([displayNumber])
+  @@index([deletedAt])
+}
+
+model ApartmentResident {
+  id               String           @id @default(cuid())
+  apartmentId      String
+  // Q41: **رُفع** شرط «يجب أن يكون RESIDENT». حارس أو فنّي مقيم حالة شائعة.
+  // الدور يبقى STAFF والتوجيه إلى /staff، والوصول بنطاق الساكن عبر
+  // residentApartmentIds(userId) لا عبر الدور.
+  userId           String
+  relationType     ResidentRelation
+  // صاحب عقد نشط واحد لكل شقة — فهرس فريد جزئي في migration خام.
+  isContractHolder Boolean          @default(false)
+  movedInAt        DateTime
+  movedOutAt       DateTime?
+  // استثناء متعمَّد ثانٍ للمبدأ 1 (مع Account.balanceIqd): يُحسب عند الحفظ
+  // من movedOutAt في **مكان واحد** فقط.
+  isActive         Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  apartment Apartment @relation(fields: [apartmentId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([apartmentId, isActive])
+  @@index([userId, isActive])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  العقود والأقساط
+// ═══════════════════════════════════════════════════════════════════════
+
+model Contract {
+  id             String         @id @default(cuid())
+  contractNumber String         @unique
+  apartmentId    String
+  holderUserId   String
+  type           ContractType
+  status         ContractStatus @default(DRAFT)
+  startDate      DateTime
+  endDate        DateTime?
+  // Q30: **الحقيقة المالية**. Apartment.priceIqd سعر معروض لا يدخل أي تقرير.
+  totalAmountIqd BigInt?
+  paymentType    PaymentType?
+  rentAmountIqd  BigInt?
+  rentCycle      BillingCycle?
+  notes          String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  deletedAt      DateTime?
+
+  apartment   Apartment        @relation(fields: [apartmentId], references: [id])
+  holder      User             @relation("ContractHolder", fields: [holderUserId], references: [id])
+  account     Account?
+  plan        InstallmentPlan?
+  attachments Attachment[]
+
+  // S1/D1: عقد نشط واحد لكل **(شقة + نوع)** لا لكل شقة — فهرس فريد جزئي
+  // WHERE status = 'ACTIVE' في migration خام. بدونه «شقة مباعة يسكنها
+  // مستأجر» غير قابلة للتمثيل، وR28 غير قابل للتنفيذ.
+  @@index([apartmentId, type, status])
+  @@index([holderUserId])
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model InstallmentPlan {
+  id                String     @id @default(cuid())
+  contractId        String     @unique
+  totalAmountIqd    BigInt
+  // ⚠️ B1: لا تدفق في المواصفة يقيّد الدفعة المقدّمة ولا يُسجّلها كدفعة —
+  // فهي رقم معلّق بلا أثر مالي. وهل تُقسَّم الأقساط على totalAmountIqd أم
+  // على totalAmountIqd − downPaymentIqd؟ الفرق ملايين على كل عقد.
+  downPaymentIqd    BigInt?
+  installmentsCount Int
+  intervalMonths    Int        @default(1)
+  startDate         DateTime
+  status            PlanStatus @default(ACTIVE)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  contract     Contract      @relation(fields: [contractId], references: [id])
+  installments Installment[]
+
+  @@index([status])
+}
+
+model Installment {
+  id              String            @id @default(cuid())
+  planId          String
+  sequence        Int
+  dueDate         DateTime
+  amountIqd       BigInt
+  status          InstallmentStatus @default(PENDING)
+  paidAt          DateTime?
+  paymentId       String?
+  followUpStaffId String?
+  lastFollowUpAt  DateTime?
+  followUpNote    String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  plan          InstallmentPlan @relation(fields: [planId], references: [id])
+  payment       Payment?        @relation(fields: [paymentId], references: [id])
+  followUpStaff StaffProfile?   @relation("InstallmentFollowUp", fields: [followUpStaffId], references: [userId])
+  ledgerEntries LedgerEntry[]
+
+  @@unique([planId, sequence])
+  // D4/1: مسار الترخيص ثلاثي القفزات Installment → Plan → Contract → apartmentId
+  // ويُنفَّذ في **كل** استدعاء، فبلا هذا الفهرس يصير فحص الترخيص نفسه بطيئاً.
+  @@index([followUpStaffId, status])
+  @@index([status, dueDate])
+  @@index([paymentId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  الخدمات والاشتراكات
+// ═══════════════════════════════════════════════════════════════════════
+
+model Service {
+  id                 String             @id @default(cuid())
+  name               String             @unique
+  description        String?
+  iconKey            String?
+  billingType        ServiceBillingType
+  billingCycle       BillingCycle?
+  pricingModel       PricingModel
+  basePriceIqd       BigInt?
+  unitLabel          String?
+  unitPriceIqd       BigInt?
+  minUnits           Int?
+  maxUnits           Int?
+  payerType          PayerType          @default(OCCUPANT)
+  // V11: isMandatory = true مع appliesTo = RESIDENT تركيبة **صالحة في
+  // المخطّط ولا يُنشئها أي تدفق أبداً** (§7.3 يحصر الإنشاء في «تنطبق على
+  // الشقق»). تُرفض عند الحفظ في الخطوة 2.1، أو يُبنى لها تدفق ثانٍ.
+  isMandatory        Boolean            @default(false)
+  isAvailable        Boolean            @default(true)
+  appliesTo          ServiceAppliesTo   @default(APARTMENT)
+  // ما يجعل إضافة خدمة جديدة ممكنة بلا كود جديد. يُتحقَّق منه بمخطّط zod
+  // **عند الحفظ** — JSON غير مُتحقَّق منه ينفجر لاحقاً في نموذج المستخدم.
+  customFieldsSchema Json?
+  notes              String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  subscriptions Subscription[]
+
+  // R24: خدمة لها اشتراكات **لا تُحذف** — isAvailable = false فقط.
+  @@index([isAvailable])
+  @@index([isMandatory])
+}
+
+model Subscription {
+  id                     String                  @id @default(cuid())
+  serviceId              String
+  subjectType            SubscriptionSubjectType
+  apartmentId            String?
+  residentUserId         String?
+  // Q26/2.4: **قابل لـnull حتى الموافقة**. المخطّط الأصلي يجعله إلزامياً،
+  // فساكن في وحدة مؤجّرة من الشركة (بلا عقد بيع) لا يستطيع حتى **طلب**
+  // خدمة payerType = OWNER — يفشل عند الإنشاء لا عند الموافقة.
+  accountId              String?
+  payerType              PayerType
+  quantity               Int                     @default(1)
+  // R23: لقطة السعر — تغيير سعر الخدمة لا يرتدّ على الاشتراكات القائمة.
+  unitPriceSnapshotIqd   BigInt
+  // Q5 ⚠️ يُعاد حسابه عند **كل تغيّر في أفراد الأسرة** لا عند الفوترة فقط —
+  // وإلا صار قيمة قديمة بين دورتين، وهو ما يقرأه مؤشّر «الإيراد الدوري
+  // المتوقّع» فيكسر إصلاح Q45.
+  periodAmountIqd        BigInt
+  billingCycle           BillingCycle?
+  status                 SubscriptionStatus      @default(PENDING_APPROVAL)
+  startDate              DateTime
+  endDate                DateTime?
+  nextChargeDate         DateTime?
+  lastChargedPeriodStart DateTime?
+  customFieldValues      Json?
+  requestedByUserId      String?
+  approvedByUserId       String?
+  notes                  String?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  deletedAt              DateTime?
+
+  service       Service       @relation(fields: [serviceId], references: [id])
+  apartment     Apartment?    @relation(fields: [apartmentId], references: [id])
+  residentUser  User?         @relation("SubscriptionResident", fields: [residentUserId], references: [id])
+  account       Account?      @relation(fields: [accountId], references: [id])
+  requestedBy   User?         @relation("SubscriptionRequestedBy", fields: [requestedByUserId], references: [id])
+  approvedBy    User?         @relation("SubscriptionApprovedBy", fields: [approvedByUserId], references: [id])
+  ledgerEntries LedgerEntry[]
+
+  @@index([serviceId, status])
+  @@index([apartmentId, status])
+  @@index([accountId])
+  @@index([residentUserId])
+  @@index([status, nextChargeDate])
+  @@index([deletedAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  المال
+// ═══════════════════════════════════════════════════════════════════════
+
+model Account {
+  id           String        @id @default(cuid())
+  // المبدأ 3: حساب واحد **لكل عقد** لا لكل شقة. مالك جديد أو مستأجر جديد
+  // لا يرث رصيد سابقه أبداً.
+  contractId   String        @unique
+  apartmentId  String
+  holderUserId String
+  status       AccountStatus @default(OPEN)
+  openedAt     DateTime      @default(now())
+  closedAt     DateTime?
+  // الاستثناء المتعمَّد الأول للمبدأ 1: كاش يُعاد حسابه **داخل نفس المعاملة**
+  // التي تكتب القيد، مع قفل صف. ومهمة ليلية تكشف الانحراف ولا تصحّحه
+  // تلقائياً — التصحيح الصامت يخفي الخلل الذي سبّبه.
+  balanceIqd   BigInt        @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  contract      Contract       @relation(fields: [contractId], references: [id])
+  apartment     Apartment      @relation(fields: [apartmentId], references: [id])
+  holder        User           @relation("AccountHolder", fields: [holderUserId], references: [id])
+  entries       LedgerEntry[]
+  payments      Payment[]
+  invoices      Invoice[]
+  subscriptions Subscription[]
+
+  @@index([apartmentId, status])
+  @@index([holderUserId])
+  @@index([status])
+}
+
+// ⚠️ append-only مطلق (R29): لا update، لا delete، **ولا deletedAt**.
+// دالة واحدة تكتب هنا: postEntry() في lib/ledger — تفرضها قاعدة ESLint.
+model LedgerEntry {
+  id              String          @id @default(cuid())
+  accountId       String
+  type            LedgerEntryType
+  source          LedgerSource
+  // موجب دائماً بلا استثناء — CHECK (amountIqd > 0) في migration خام.
+  // الاتجاه يحمله type وحده، فصيغة الرصيد بلا أي فرع للإشارة (D2).
+  amountIqd       BigInt
+  // ما يقرأه الساكن في كشف حسابه: «اشتراك المولدة - 5 أمبير - شهر 8/2026».
+  descriptionAr   String
+  periodStart     DateTime?
+  periodEnd       DateTime?
+  subscriptionId  String?
+  installmentId   String?
+  badgeId         String?
+  paymentId       String?
+  createdByUserId String?
+  // إلزامي عندما source = MANUAL (D2/1) — لا تسوية بلا سبب مكتوب.
+  reason          String?
+  createdAt       DateTime        @default(now())
+
+  account      Account       @relation(fields: [accountId], references: [id])
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+  installment  Installment?  @relation(fields: [installmentId], references: [id])
+  badge        Badge?        @relation(fields: [badgeId], references: [id])
+  payment      Payment?      @relation(fields: [paymentId], references: [id])
+  createdBy    User?         @relation("LedgerCreatedBy", fields: [createdByUserId], references: [id])
+
+  // R30 + Q3 + V1 ⚠️ التفريد الوحيد في §5 هو (subscriptionId, periodStart)،
+  // وقيود RENT و INSTALLMENT لها subscriptionId = null فتفلت منه —
+  // و§5.1/2 **يُعلن هذا مقصوداً**. فهارس فريدة **جزئية** إضافية في
+  // migration خام تسدّ الثغرة، وتُشطب ملاحظة §5.1/2 نفسها (T10).
+  @@index([accountId, createdAt])
+  @@index([subscriptionId])
+  @@index([installmentId])
+  @@index([badgeId])
+  @@index([paymentId])
+  @@index([source])
+}
+
+model Payment {
+  id                  String        @id @default(cuid())
+  accountId           String
+  amountIqd           BigInt
+  method              PaymentMethod
+  status              PaymentStatus @default(PENDING)
+  purpose             LedgerSource
+  installmentId       String?
+  referenceId         String        @unique
+  waylLinkId          String?
+  waylPaymentUrl      String?
+  waylRawPayload      Json?
+  // Q40: linkExpiresIn يُرسَل لـWayl و**لا يُخزَّن** في المخطّط الأصلي، فمهمة
+  // الانتهاء اليومية التي يطلبها §12.4 لا تملك ما تقارن به.
+  expiresAt           DateTime?
+  paidAt              DateTime?
+  // ليس تفصيلاً — هو **المسؤولية عن نقد حقيقي** (N4).
+  receivedByUserId    String?
+  // B4: كل دفعة نقدية تنتمي إلى **جلسة صندوق مفتوحة**. قابل لـnull لأن
+  // الدفع الإلكتروني لا صندوق له — والقيد الجزئي يفرضه على النقد وحده.
+  cashDrawerSessionId String?
+  notes               String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  account           Account            @relation(fields: [accountId], references: [id])
+  receivedBy        User?              @relation("PaymentReceivedBy", fields: [receivedByUserId], references: [id])
+  cashDrawerSession CashDrawerSession? @relation(fields: [cashDrawerSessionId], references: [id])
+  invoice           Invoice?
+  installments      Installment[]
+  ledgerEntries     LedgerEntry[]
+  attachments       Attachment[]
+
+  @@index([accountId, status])
+  @@index([status, expiresAt])
+  @@index([receivedByUserId, paidAt])
+  @@index([cashDrawerSessionId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  B4 — جلسة صندوق النقد
+// ═══════════════════════════════════════════════════════════════════════
+//
+// ⚠️ **لماذا هذا الجدول موجود.** المصفوفة تعطي كل موظف صلاحية تسجيل دفعة
+// نقدية على أي حساب. وموظف يسجّل دفعة ويقبض النقد ولا يورّده = **إسقاط
+// دَين مقابل سرقة**. الدفتر append-only فالقيد لا يُحذف — لكن الدَين سقط
+// والنقد بجيبه.
+//
+// والعلم `canReceiveCash` وحده حراسةٌ على الباب: من دخل يفعل ما يشاء.
+// الجلسة تجيب السؤال الآخر: **هل ورّد ما سجّله؟**
+//
+// ── والفرق يُحسب لا يُخزَّن (المبدأ 1) ──────────────────────────────
+// `expectedIqd` = مجموع دفعات الجلسة، **استعلام لا عمود**. عمودٌ مخزَّن
+// يتقادم عند أول دفعة تُسجَّل خارج المسار المتوقَّع، ويبدو معقولاً دائماً.
+// والمخزَّن هنا شيء واحد لا يُشتقّ: `declaredIqd` — ما أقرّ الموظف بتوريده.
+model CashDrawerSession {
+  id             String    @id @default(cuid())
+  // صاحب الصندوق. الجلسة **شخصية**: صندوق مشترك يُلغي المسؤولية.
+  staffUserId    String
+  openedAt       DateTime  @default(now())
+  closedAt       DateTime?
+  // ما أقرّ الموظف بتوريده عند الإقفال. `null` ما دامت مفتوحة.
+  declaredIqd    BigInt?
+  // من أقفلها — قد يكون الموظف نفسه أو محاسباً يستلم منه.
+  closedByUserId String?
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  staff    User      @relation("CashDrawerStaff", fields: [staffUserId], references: [id])
+  closedBy User?     @relation("CashDrawerClosedBy", fields: [closedByUserId], references: [id])
+  payments Payment[]
+
+  // جلسة مفتوحة واحدة لكل موظف — فهرس فريد جزئي WHERE closedAt IS NULL
+  // في SQL خام. جلستان مفتوحتان تجعلان «أي صندوق؟» سؤالاً بلا جواب.
+  @@index([staffUserId, closedAt])
+  @@index([closedAt])
+}
+
+// R35: حصينة بعد الإصدار. الإلغاء بقيد معاكس وملاحظة — لا تعديل ولا حذف،
+// ولا deletedAt (S3).
+model Invoice {
+  id        String   @id @default(cuid())
+  number    String   @unique
+  paymentId String   @unique
+  accountId String
+  issuedAt  DateTime @default(now())
+  totalIqd  BigInt
+  // Q15: لقطة البنود المسدَّدة فعلاً. للدفعة العامة سطر واحد «دفعة على
+  // الحساب» + الرصيد قبل وبعد — لأنه لا جدول تخصيص دفعة↔قيد في النظام.
+  lines     Json
+  pdfUrl    String?
+  createdAt DateTime @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id])
+  account Account @relation(fields: [accountId], references: [id])
+
+  @@index([accountId, issuedAt])
+}
+
+// Q17: تسلسل Postgres لا يُصفَّر سنوياً. عدّاد بمفتاح (kind, year) يُقرأ بـ
+// SELECT … FOR UPDATE داخل نفس المعاملة. الفراغات مقبولة، التكرار ممنوع
+// (R34) — ولذلك **لا** MAX(number)+1 الذي يتكرّر عند التزامن.
+model Counter {
+  kind      CounterKind
+  year      Int
+  lastValue Int         @default(0)
+  updatedAt DateTime    @updatedAt
+
+  @@id([kind, year])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  الوصول
+// ═══════════════════════════════════════════════════════════════════════
+
+model Vehicle {
+  id            String        @id @default(cuid())
+  apartmentId   String
+  ownerUserId   String?
+  // S7 ⚠️ **بلا @unique**. الفريد العالمي مع حالة REMOVED يجعل سيارة بيعت
+  // لساكن آخر غير قابلة للتسجيل أبداً. الفهرس فريد **جزئي**
+  // WHERE status <> 'REMOVED' في migration خام.
+  plateNumber   String
+  plateProvince String?
+  make          String?
+  model         String?
+  color         String?
+  status        VehicleStatus @default(PENDING_APPROVAL)
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  apartment Apartment @relation(fields: [apartmentId], references: [id])
+  owner     User?     @relation("VehicleOwner", fields: [ownerUserId], references: [id])
+  badges    Badge[]
+
+  // بحث بوّابة الأمن يجب أن يكون فورياً — سيارة تنتظر عند البوّابة.
+  @@index([plateNumber])
+  @@index([apartmentId, status])
+  @@index([ownerUserId])
+}
+
+model Badge {
+  id             String      @id @default(cuid())
+  // S4: «فريد بين الباجات غير الملغاة» موصوف في §4.17 و**بلا @unique في
+  // المخطّط إطلاقاً**. فهرس فريد جزئي WHERE status <> 'REVOKED'.
+  vehicleId      String
+  // S5/Q28 ⚠️ **قابل لـnull**. §7.9/2 يُنشئ Badge{REQUESTED} بلا كود
+  // والمخطّط الأصلي يفرض String @unique غير قابل لـnull — فالتدفق الموصوف
+  // **غير قابل للتنفيذ على المخطّط الموصوف**. يُسنَد عند الإصدار.
+  code           String?     @unique
+  status         BadgeStatus @default(REQUESTED)
+  // ⚠️ B3: على حساب مَن يُقيَّد هذا الرسم؟ D1 جعل حسابين مفتوحين ممكنين.
+  // مسار الإصدار يرمي PendingDecisionError بدل أن يخمّن.
+  feeIqd         BigInt?
+  issuedAt       DateTime?
+  issuedByUserId String?
+  // Q40 ⚠️ **لا مهمة تقلب EXPIRED** في المواصفة، فباج انتهى يبقى ISSUED
+  // وشاشة الأمن تُدخل سيارته بلا تفتيش. ثقب في ضبط الوصول الفيزيائي لا
+  // مجرّد حالة enum ناقصة. مهمة الصيانة اليومية تسدّه.
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+  revokeReason   String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  vehicle       Vehicle       @relation(fields: [vehicleId], references: [id])
+  issuedBy      User?         @relation("BadgeIssuedBy", fields: [issuedByUserId], references: [id])
+  ledgerEntries LedgerEntry[]
+
+  @@index([vehicleId, status])
+  @@index([status, expiresAt])
+  @@index([issuedByUserId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  الطلبات
+// ═══════════════════════════════════════════════════════════════════════
+
+model ServiceRequest {
+  id               String        @id @default(cuid())
+  number           String        @unique
+  type             RequestType
+  // Q35 ⚠️ **قابل لـnull** + scope. شكوى المصعد أو المسبح أو البوّابة لا
+  // تنتمي لشقة، والمخطّط الأصلي يفرض شقة — فيُلحقها الموظف بشقة عشوائية
+  // وتتلوّث كل تقارير الطلبات («الشقة A-1-2 لها 30 شكوى»).
+  // إلزامي عندما يكون المنشئ ساكناً — يُفرض في zod + فحص خادم.
+  apartmentId      String?
+  scope            RequestScope  @default(APARTMENT)
+  createdByUserId  String
+  title            String
+  description      String
+  departmentId     String?
+  departmentTaskId String?
+  assignedStaffId  String?
+  priority         Priority      @default(NORMAL)
+  status           RequestStatus @default(NEW)
+  // إلزامية للانتقال إلى DONE — تُفرض في **الخادم** لا في الواجهة.
+  resolutionNote   String?
+  closedAt         DateTime?
+  ratedStars       Int?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  apartment      Apartment?       @relation(fields: [apartmentId], references: [id])
+  createdBy      User             @relation("RequestCreator", fields: [createdByUserId], references: [id])
+  department     Department?      @relation(fields: [departmentId], references: [id])
+  departmentTask DepartmentTask?  @relation(fields: [departmentTaskId], references: [id])
+  assignedStaff  StaffProfile?    @relation("RequestAssignee", fields: [assignedStaffId], references: [userId])
+  comments       RequestComment[]
+  attachments    Attachment[]
+
+  // D4: الوصول يُمنح بطلب مُكلَّف به **غير مُغلق** على تلك الشقة.
+  @@index([assignedStaffId, status])
+  @@index([apartmentId, status])
+  @@index([departmentId, status])
+  @@index([status, priority])
+  @@index([createdByUserId])
+}
+
+model RequestComment {
+  id           String   @id @default(cuid())
+  requestId    String
+  authorUserId String
+  body         String
+  // مخفي عن الساكن — **تصفية على الخادم لا على الواجهة**، لأن ترشيحاً في
+  // العميل يعني إرسال التعليق الداخلي فعلياً إلى المتصفح.
+  isInternal   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  request ServiceRequest @relation(fields: [requestId], references: [id])
+  author  User           @relation(fields: [authorUserId], references: [id])
+
+  @@index([requestId, createdAt])
+  @@index([authorUserId])
+}
+
+// Q37 — المسارات الثلاثة التي يَعِد بها §3.3 و§8.4 ولا نموذج لها ولا حالة
+// ولا إجراء: طلب باج · طلب إلغاء اشتراك · طلب تغيير بيانات.
+// بدونها بوابة الساكن **للقراءة فقط** عملياً في هذه المواضع.
+model ResidentRequest {
+  id               String                @id @default(cuid())
+  kind             ResidentRequestKind
+  createdByUserId  String
+  // حمولة الطلب بحسب نوعه: معرّف السيارة · معرّف الاشتراك · الحقول المطلوب
+  // تغييرها. يُتحقَّق منها بمخطّط zod لكل نوع عند الإنشاء.
+  payload          Json
+  status           ResidentRequestStatus @default(PENDING)
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  reviewNote       String?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  createdBy  User  @relation("ResidentRequestCreator", fields: [createdByUserId], references: [id])
+  reviewedBy User? @relation("ResidentRequestReviewer", fields: [reviewedByUserId], references: [id])
+
+  @@index([status, kind])
+  @@index([createdByUserId, status])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  العرضية
+// ═══════════════════════════════════════════════════════════════════════
+
+model Attachment {
+  id               String   @id @default(cuid())
+  url              String
+  bucket           String
+  fileName         String
+  mimeType         String
+  sizeBytes        Int
+  isPrivate        Boolean  @default(true)
+  uploadedByUserId String?
+  apartmentId      String?
+  contractId       String?
+  serviceRequestId String?
+  // S6/Q9: مذكور في §4.19 و**مفقود من مخطّط §5**. بدونه لا مكان لصورة وصل
+  // التحويل.
+  paymentId        String?
+  createdAt        DateTime @default(now())
+
+  uploadedBy     User?           @relation(fields: [uploadedByUserId], references: [id])
+  apartment      Apartment?      @relation(fields: [apartmentId], references: [id])
+  contract       Contract?       @relation(fields: [contractId], references: [id])
+  serviceRequest ServiceRequest? @relation(fields: [serviceRequestId], references: [id])
+  payment        Payment?        @relation(fields: [paymentId], references: [id])
+
+  @@index([apartmentId])
+  @@index([contractId])
+  @@index([serviceRequestId])
+  @@index([paymentId])
+}
+
+model Notification {
+  id                String              @id @default(cuid())
+  userId            String
+  channel           NotificationChannel
+  templateKey       String
+  payload           Json
+  body              String
+  status            NotificationStatus  @default(PENDING)
+  providerMessageId String?
+  error             String?
+  retryCount        Int                 @default(0)
+  sentAt            DateTime?
+  // Q44 ⚠️ بدون هذا العمود يبقى «جرس الإخطارات» في §11.2 **زخرفة**:
+  // status يعبّر عن حالة الإرسال (PENDING/SENT/FAILED) لا عن قراءة المستخدم.
+  readAt            DateTime?
+  createdAt         DateTime            @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([status, createdAt])
+  @@index([userId, readAt])
+  @@index([templateKey])
+}
+
+model OtpCode {
+  id         String    @id @default(cuid())
+  phone      String
+  // مُهشَّر لا نصّاً صريحاً. اختبار مستقل يثبت غياب الرمز نصاً من القاعدة.
+  codeHash   String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int       @default(0)
+  requestIp  String?
+  createdAt  DateTime  @default(now())
+
+  @@index([phone, createdAt])
+  @@index([expiresAt])
+}
+
+// Q46 — رابط الدخول لمرة واحدة: المخرج الوحيد لساكن بلا واتساب، وهو
+// موصوف في §10.2 **بلا جدول ولا إجراء ولا مسار**.
+// جدول مستقل لا إعادة استخدام لـOtpCode: صلاحية 24 ساعة ورمز في رابط
+// خصائصه الأمنية مختلفة عن رمز 6 أرقام لخمس دقائق.
+model LoginLink {
+  id              String    @id @default(cuid())
+  userId          String
+  tokenHash       String    @unique
+  expiresAt       DateTime
+  consumedAt      DateTime?
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// Q20 — حدود المعدّل في Postgres، لا Redis ولا Upstash في v1.
+// ⚠️ OtpCode يحمل requestIp و attempts فعلاً، فالعدّ على مسار OTP ممكن
+// بدونه — لكن §12.1 يطلب حدوداً على **أربعة** مسارات: OTP · الدخول ·
+// إنشاء روابط الدفع · توقيع الملفات، وثلاثة منها لا تمرّ بـOtpCode.
+model RateLimitHit {
+  id        String   @id @default(cuid())
+  // "otp:+9647..." · "login:ip:1.2.3.4" · "signed-url:user_x"
+  bucketKey String
+  createdAt DateTime @default(now())
+
+  @@index([bucketKey, createdAt])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  action      String
+  entityType  String
+  entityId    String?
+  // ⚠️ قاعدة خصوصية (§12.1): صور الهوية وبطاقة السكن **لا تُسجَّل أبداً**
+  // هنا. قائمة حقول محجوبة تُصفّى قبل الكتابة.
+  before      Json?
+  after       Json?
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  actor User? @relation(fields: [actorUserId], references: [id])
+
+  @@index([actorUserId, createdAt])
+  @@index([entityType, entityId])
+  @@index([action, createdAt])
+}
