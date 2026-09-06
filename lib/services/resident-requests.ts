@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { nextNumber } from "@/lib/services/counter";
 import { residentApartmentIds } from "@/lib/auth/scope";
 import { BusinessRuleError, ForbiddenError, NotFoundError } from "@/lib/errors";
-import type { Priority, RequestScope, RequestType } from "@/lib/domain/enums";
+import type { RequestScope, RequestType } from "@/lib/domain/enums";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════
@@ -38,7 +38,12 @@ export interface ResidentRequestInput {
   title: string;
   description: string;
   departmentTaskId?: string | undefined;
-  priority?: Priority | undefined;
+  /*
+   * ⚠️ **ولا `priority` هنا** — للسبب نفسه المكتوب تحت `commentAsResident`:
+   * كان الحقل معلَناً في الواجهة و`handler` يكتب `"NORMAL"` دائماً. أي أنه
+   * يُقبَل ثم يُهمَل — وهو ما يجعل من يقرأ التوقيع يظنّ للساكن خياراً ليس
+   * له، ويكتب واجهةً تعرضه. وغيابُه من التوقيع هو التنفيذ.
+   */
 }
 
 /**

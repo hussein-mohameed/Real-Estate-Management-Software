@@ -21,7 +21,12 @@ import {
 import { createResident, linkResidentToApartment } from "@/lib/actions/residents";
 import { activateContract, createContract } from "@/lib/actions/contracts";
 import { createService } from "@/lib/actions/services";
-import { createInstallmentPlan } from "@/lib/actions/installments";
+import { createInstallmentPlan, markInstallmentPaid } from "@/lib/actions/installments";
+import {
+  approveSubscription,
+  cancelSubscription,
+  createSubscription,
+} from "@/lib/actions/subscriptions";
 import { addRequestComment, setRequestStatus } from "@/lib/actions/requests";
 import { createRequestFor } from "@/lib/services/resident-requests";
 import { runInstallmentCharges } from "@/lib/services/installment-charges";
@@ -29,6 +34,7 @@ import {
   closeCashDrawer,
   getCashDrawer,
   openMyCashDrawer,
+  recordCashPayment,
 } from "@/lib/actions/cash";
 import type { ActionResult } from "@/lib/result";
 
@@ -277,12 +283,32 @@ async function reset(): Promise<void> {
     select: { id: true },
   });
 
-  const userIds = [
+  /**
+   * ── 🔴 مجموعتان لا واحدة — ولا تُخلطان ────────────────────────────
+   *
+   * كانت واحدة: بريد الموظفين ∪ روابط شقق البذر ∪ أصحاب عقودها ∪ البادئة.
+   * ثم مرّر إليها `seedResidentPortal` **حسابك الحقيقي** — لأنه صار مرتبطاً
+   * بشقة بذرٍ وصاحب عقد عليها. فحذفَه `--reset` مع الباقي.
+   *
+   * ⚠️ وحسابٌ حقيقي محذوف لا يُستعاد: هويّة Supabase تبقى ويختفي صفّه،
+   * فتدخل بنجاح إلى نظام لا يعرفك. كشفتُه بأن البذر التالي طبع «لا حساب
+   * حقيقي في القاعدة» بعد أن كان يجد ثلاثة.
+   *
+   *   • `seededUserIds`  ← **من أنشأته البذرة وحده**، بعلامةٍ تحملها هي:
+   *     الهاتف أو `seed_` أو `@example.com`. وهذه وحدها تُحذف صفوفُها.
+   *   • `scopedUserIds`  ← تضيف المرتبطين بشقق البذر، لصفوفٍ **تخصّ
+   *     الشقق** لا الأشخاص: طلبُ منطقة مشتركة `apartmentId = null` لا
+   *     يُلتقط بالشقة، ويجب أن يُحذف مع بذره.
+   */
+  const seededUserIds = [
+    ...new Set([...staffUsers.map((u) => u.id), ...prefixed.map((u) => u.id)]),
+  ];
+
+  const scopedUserIds = [
     ...new Set([
-      ...staffUsers.map((u) => u.id),
+      ...seededUserIds,
       ...linked.map((l) => l.userId),
       ...holders.map((h) => h.holderUserId),
-      ...prefixed.map((u) => u.id),
     ]),
   ];
 
@@ -299,7 +325,7 @@ async function reset(): Promise<void> {
       where: { account: { apartmentId: { in: apartmentIds } } },
     });
     await prisma.subscription.deleteMany({ where: { apartmentId: { in: apartmentIds } } });
-    await prisma.cashDrawerSession.deleteMany({ where: { staffUserId: { in: userIds } } });
+    await prisma.cashDrawerSession.deleteMany({ where: { staffUserId: { in: seededUserIds } } });
     await prisma.account.deleteMany({ where: { apartmentId: { in: apartmentIds } } });
 
     /*
@@ -319,14 +345,20 @@ async function reset(): Promise<void> {
      * ⚠️ الطلبات والمركبات تشير إلى الشقة — تُحذف قبلها.
      * والتعليقات قبل الطلبات، والباجات قبل المركبات.
      */
-    await prisma.requestComment.deleteMany({
-      where: { request: { apartmentId: { in: apartmentIds } } },
-    });
-    await prisma.serviceRequest.deleteMany({
-      where: {
-        OR: [{ apartmentId: { in: apartmentIds } }, { createdByUserId: { in: userIds } }],
-      },
-    });
+    /**
+     * ── 🔴 والتعليق يُحذف بنفس شرط طلبه — حرفياً ──────────────────────
+     * كان يُحذف بـ`request.apartmentId` وحدها، والطلب يُحذف بـ«الشقة **أو**
+     * منشئه». وطلب المنطقة المشتركة `apartmentId = null` (‏Q35) — فتنجو
+     * تعليقاته ويسقط حذفُه على `RequestComment_requestId_fkey`.
+     *
+     * ⚠️ وشرطان يجب أن يتطابقا لا يُكتبان مرّتين: `requestWhere` واحد
+     * يُمرَّر للاثنين، فلا ينحرف أحدهما عن الآخر عند أوّل تعديل.
+     */
+    const requestWhere = {
+      OR: [{ apartmentId: { in: apartmentIds } }, { createdByUserId: { in: scopedUserIds } }],
+    };
+    await prisma.requestComment.deleteMany({ where: { request: requestWhere } });
+    await prisma.serviceRequest.deleteMany({ where: requestWhere });
     await prisma.badge.deleteMany({
       where: { vehicle: { apartmentId: { in: apartmentIds } } },
     });
@@ -336,22 +368,22 @@ async function reset(): Promise<void> {
     await prisma.building.deleteMany({ where: { id: { in: buildingIds } } });
     /*
      * ⚠️ **بالبادئة مباشرةً لا بالقائمة المجموعة.**
-     * `userIds` تُحسب **قبل** الحذف، فما نجا من جولة فاشلة سابقة لا يدخلها
+     * `seededUserIds` تُحسب **قبل** الحذف، فما نجا من جولة فاشلة سابقة لا يدخلها
      * — ويبقى، ويُصادم الهاتف أو البريد في الجولة التالية برسالة «مسجَّل
      * لمستخدم آخر» لا تشير إلى سببها.
      */
-    const seededUsers = { phone: { startsWith: SEED_PHONE_PREFIX } } as const;
+    const seededPhone = { phone: { startsWith: SEED_PHONE_PREFIX } } as const;
     await prisma.staffSkill.deleteMany({
-      where: { OR: [{ staffProfileId: { in: userIds } }, { staffProfile: { user: seededUsers } }] },
+      where: { OR: [{ staffProfileId: { in: seededUserIds } }, { staffProfile: { user: seededPhone } }] },
     });
     /* ⚠️ وأي مهارة معلَّقة على ملفّ آخر تمنع حذف المهارة نفسها */
     await prisma.staffSkill.deleteMany({ where: { skill: { name: { in: [...SKILLS] } } } });
     await prisma.staffProfile.deleteMany({
-      where: { OR: [{ userId: { in: userIds } }, { user: seededUsers }] },
+      where: { OR: [{ userId: { in: seededUserIds } }, { user: seededPhone } ] },
     });
-    await prisma.residentProfile.deleteMany({ where: { userId: { in: userIds } } });
-    await prisma.notification.deleteMany({ where: { userId: { in: userIds } } });
-    await prisma.auditLog.deleteMany({ where: { actorUserId: { in: userIds } } });
+    await prisma.residentProfile.deleteMany({ where: { userId: { in: seededUserIds } } });
+    await prisma.notification.deleteMany({ where: { userId: { in: seededUserIds } } });
+    await prisma.auditLog.deleteMany({ where: { actorUserId: { in: seededUserIds } } });
     /*
      * ⚠️ بالاسم الصريح لا بنمط ولا بلا شرط. راجع `SERVICE_NAMES` أعلاه:
      * `deleteMany({})` هنا كان يمحو ما أنشأته الإدارة بيدها.
@@ -366,14 +398,588 @@ async function reset(): Promise<void> {
     await prisma.vendor.deleteMany({ where: { name: VENDOR_NAME } });
     /*
      * ⚠️ المستخدم آخر شيء: كل ما سبق يشير إليه بمفتاح أجنبي.
-     * والحذف بالقائمة المجموعة أعلاه لا بالبادئة وحدها.
+     *
+     * ── 🔴 و**بالعلامة وحدها** لا بالارتباط ────────────────────────
+     * `seededUserIds` لا `scopedUserIds`. الفرق بينهما هو حسابك: مرتبطٌ
+     * بشقة بذرٍ ولم تُنشئه البذرة. والحذف بالارتباط كان يمحوه.
+     *
+     * وكل من أنشأته البذرة يحمل بادئة هاتفها — حتى من مرّ عبر إجراء
+     * ووُلِّد له `cuid()`. فالعلامة كافية، والارتباط زائدٌ وخطر.
      */
     await prisma.user.deleteMany({
-      where: { OR: [{ id: { in: userIds } }, seededUsers] },
+      where: { OR: [{ id: { in: seededUserIds } }, seededPhone] },
     });
   } finally {
     await prisma.$executeRawUnsafe(`ALTER TABLE "LedgerEntry" ENABLE TRIGGER USER`);
     await prisma.$executeRawUnsafe(`ALTER TABLE "Invoice" ENABLE TRIGGER USER`);
+  }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════
+ *  بوّابة الساكن — بذرٌ معمَّق.
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * ── 🔴 لماذا يُربَط حسابٌ **حقيقي** لا مبذور ────────────────────────
+ * كل شاشة في `/app` ترشّح بمن يدخل — لا بما في القاعدة:
+ *   • `getMyHome`         ← روابط الشقق (`ApartmentResident`)
+ *   • `getMyInvoices`     ← `Account.holderUserId`
+ *   • `getMyInstallments` ← `Contract.holderUserId`
+ *   • `/app/requests`     ← `ServiceRequest.createdByUserId`
+ *
+ * فبذرُ ستّةٍ وثمانين ساكناً **لا تملك رموزهم** يملأ القاعدة ويترك بوّابتك
+ * فارغة. وهذا ما كان يحدث حرفياً: الحسابات الثلاثة غير المبذورة — ومنها
+ * حسابك — كانت بلا رابط شقة واحد، فكل صفحة تعرض `EmptyState`.
+ *
+ * ولهذا يربط هذا القسم **الحسابات الحقيقية الموجودة**، ولا يخترع لها
+ * حساباً جديداً: البذر يجب أن يُرى من الباب الذي تدخل منه.
+ *
+ * ── ⚠️ وثلاثة أشكال لا شكل واحد ─────────────────────────────────────
+ * الشاشة تُختبَر بالفرق لا بالحجم. صاحب عقدٍ ممتلئ وحده يترك حالة «فرد
+ * الأسرة الذي يرى بيته ولا يرى ماله» بلا اختبار — وهي حالةُ نصف السكان.
+ *
+ * ── ⚠️ وما لا يفعله هذا القسم: `paymentType: "INSTALLMENTS"` ────────
+ * `activateContract` ما زال يرمي `PendingDecisionError("B1")` عليه، رغم
+ * أن `B1` حُسم ونُفّذ في `createInstallmentPlan`. فالحارس بقي معلَّقاً بعد
+ * القرار، ولا عقد في النظام يمكن أن يكون `INSTALLMENTS`. البذر يستعمل
+ * `FULL` كما يفعل الحلقة الرئيسة — ولا يرفع حارساً يمسّ المال من تلقائه.
+ */
+
+interface PortalProfile {
+  readonly label: string;
+  /** `HOLDER` صاحب عقد · `TENANT` مستأجر · `FAMILY` فرد أسرة بلا عقد. */
+  readonly tenancy: "HOLDER" | "TENANT" | "FAMILY";
+  readonly plan: boolean;
+  readonly payments: number;
+  readonly requests: number;
+  readonly household: number;
+  readonly vehicles: number;
+  readonly optionalServices: boolean;
+}
+
+/**
+ * ⚠️ الأعداد ليست اعتباطاً — كلٌّ منها يعبر حدَّ صفحةٍ بعينه:
+ *   • `payments: 28` ← الفواتير ‏25/صفحة  ← **صفحتان**
+ *   • `requests: 27` ← الطلبات ‏25/صفحة   ← **صفحتان**
+ *   • ومع قيود الاشتراكات والأقساط يتجاوز كشف الحساب ‏50 قيداً ← صفحتان
+ * ورقمٌ تحت الحدّ يترك زرّ التصفيح بلا ضغطة واحدة في أي اختبار بصري.
+ */
+const PORTAL_PROFILES: readonly PortalProfile[] = [
+  {
+    label: "صاحب عقد — ممتلئ بتصفيح على الفواتير والطلبات وكشف الحساب",
+    tenancy: "HOLDER",
+    plan: true,
+    payments: 28,
+    requests: 27,
+    household: 4,
+    vehicles: 4,
+    optionalServices: true,
+  },
+  {
+    label: "مستأجر — بلا خطة أقساط، بيانات متوسّطة",
+    tenancy: "TENANT",
+    plan: false,
+    payments: 6,
+    requests: 5,
+    household: 2,
+    vehicles: 1,
+    optionalServices: true,
+  },
+  {
+    label: "فرد أسرة — يرى بيته ولا يرى ماله (حالات فارغة مقصودة)",
+    tenancy: "FAMILY",
+    plan: false,
+    payments: 0,
+    requests: 0,
+    household: 0,
+    vehicles: 0,
+    optionalServices: false,
+  },
+];
+
+/**
+ * مكتبة طلبات **متمايزة** — لا عنوانٌ واحد مكرَّر سبعاً وعشرين مرّة.
+ *
+ * ⚠️ جدولٌ متكرّر يجعل البحث والترشيح يبدوان عاملين وهما لا يميّزان شيئاً:
+ * كل استعلام يُرجع كل الصفوف. والتمايز هنا هو ما يجعل شاشة الطلبات
+ * قابلة للاختبار أصلاً.
+ */
+const PORTAL_REQUESTS = [
+  ["SERVICE_REQUEST", "APARTMENT", "تسرّب ماء تحت المغسلة", "الماء يتسرّب من وصلة المغسلة في حمّام الضيوف منذ يومين.", "DONE"],
+  ["COMPLAINT", "COMMON_AREA", "ضجيج من ورشة الطابق الأرضي", "أصوات مطارق من الورشة بعد العاشرة ليلاً.", "IN_PROGRESS"],
+  ["SERVICE_REQUEST", "APARTMENT", "المكيّف لا يبرّد", "مكيّف غرفة النوم يعمل بلا تبريد منذ الأسبوع الماضي.", "ASSIGNED"],
+  ["SERVICE_REQUEST", "COMMON_AREA", "إنارة الممرّ مطفأة", "إنارة ممرّ الطابق الثالث مطفأة منذ ثلاثة أيام.", "DONE"],
+  ["COMPLAINT", "APARTMENT", "رطوبة في سقف الصالة", "بقعة رطوبة تتوسّع في زاوية سقف الصالة.", "NEW"],
+  ["SERVICE_REQUEST", "APARTMENT", "باب الشقة لا يُقفل", "قفل الباب الرئيس يعلق ويحتاج دفعاً قوياً.", "DONE"],
+  ["SERVICE_REQUEST", "COMMON_AREA", "المصعد يتوقّف بين الطوابق", "المصعد توقّف مرّتين هذا الأسبوع بين الثاني والثالث.", "IN_PROGRESS"],
+  ["COMPLAINT", "COMMON_AREA", "نفايات لم تُرفع", "أكياس النفايات باقية عند مدخل البناية منذ يومين.", "DONE"],
+  ["SERVICE_REQUEST", "APARTMENT", "انقطاع كهرباء متكرّر", "الكهرباء تنقطع عن الشقة وحدها مرّات في اليوم.", "ASSIGNED"],
+  ["SERVICE_REQUEST", "APARTMENT", "سخّان الماء لا يعمل", "السخّان لا يسخّن رغم وصول الكهرباء إليه.", "NEW"],
+  ["COMPLAINT", "COMMON_AREA", "سيارة تسدّ مدخل المرآب", "سيارة تقف يومياً أمام باب المرآب وتمنع الخروج.", "CANCELLED"],
+  ["SERVICE_REQUEST", "APARTMENT", "شبّاك المطبخ لا يُغلق", "مِزلاج الشبّاك مكسور ولا يُحكم الإغلاق.", "DONE"],
+  ["SERVICE_REQUEST", "COMMON_AREA", "بوّابة المجمَّع بطيئة", "البوّابة الآلية تتأخّر في الفتح وتُغلق فجأة.", "IN_PROGRESS"],
+  ["COMPLAINT", "APARTMENT", "ضغط الماء ضعيف", "ضغط الماء ضعيف في الطابق الأعلى بعد الظهر.", "NEW"],
+  ["SERVICE_REQUEST", "APARTMENT", "صيانة دورية للمكيّفات", "طلب صيانة دورية لثلاثة مكيّفات قبل الصيف.", "ASSIGNED"],
+  ["SERVICE_REQUEST", "COMMON_AREA", "تشذيب أشجار الحديقة", "أغصان تلامس نوافذ الطابق الأول وتحتاج تشذيباً.", "DONE"],
+  ["COMPLAINT", "COMMON_AREA", "إنارة الموقف ضعيفة", "الموقف الخلفي مظلم بعد المغرب.", "IN_PROGRESS"],
+  ["SERVICE_REQUEST", "APARTMENT", "تبديل قفل غرفة النوم", "المفتاح انكسر داخل القفل ويحتاج تبديلاً.", "DONE"],
+  ["SERVICE_REQUEST", "APARTMENT", "تسليك مجرى المطبخ", "مجرى حوض المطبخ بطيء التصريف.", "NEW"],
+  ["COMPLAINT", "COMMON_AREA", "حيوانات سائبة في الساحة", "كلاب سائبة تدخل الساحة ليلاً من الباب الخلفي.", "ASSIGNED"],
+  ["SERVICE_REQUEST", "COMMON_AREA", "تنظيف خزّان الماء", "طلب جدولة تنظيف الخزّان المشترك.", "DONE"],
+  ["SERVICE_REQUEST", "APARTMENT", "دهان جدار متضرّر", "جدار الممرّ الداخلي تقشّر بعد تسرّب سابق.", "IN_PROGRESS"],
+  ["COMPLAINT", "APARTMENT", "رائحة من فتحة التهوية", "رائحة كريهة تخرج من فتحة تهوية الحمّام.", "NEW"],
+  ["SERVICE_REQUEST", "COMMON_AREA", "تصليح سلّم الطوارئ", "درجة في سلّم الطوارئ مكسورة.", "DONE"],
+  ["SERVICE_REQUEST", "APARTMENT", "تركيب مروحة شفط", "طلب تركيب مروحة شفط في المطبخ.", "CANCELLED"],
+  ["COMPLAINT", "COMMON_AREA", "ماء راكد قرب المدخل", "ماء راكد يتجمّع قرب المدخل بعد غسل الساحة.", "ASSIGNED"],
+  ["SERVICE_REQUEST", "APARTMENT", "فحص عدّاد الكهرباء", "قراءة العدّاد تبدو أعلى من الاستهلاك المعتاد.", "NEW"],
+] as const;
+
+/** أسماء أفراد البيت — تُقرأ كأسماء حقيقية لا كـ«ساكن ١». */
+const HOUSEHOLD_NAMES = [
+  ["زينب الحسناوي", "FEMALE"],
+  ["كرار الزيدي", "MALE"],
+  ["مريم الخفاجي", "FEMALE"],
+  ["يوسف الربيعي", "MALE"],
+] as const;
+
+async function seedResidentPortal(
+  actor: ActorContext,
+  apartmentIds: readonly string[],
+): Promise<void> {
+  console.log("── بوّابة الساكن: بذر معمَّق ──");
+
+  /*
+   * ⚠️ **غير المبذورين وحدهم.** من أنشأته البذرة يحمل بادئة الهاتف أو
+   * `seed_`، وهو لا يدخل النظام لأن لا أحد يملك رمزه. والباقي هم من
+   * تدخل بهم فعلاً.
+   */
+  const portalUsers = await prisma.user.findMany({
+    where: {
+      isActive: true,
+      role: { in: ["RESIDENT", "OWNER"] },
+      NOT: [{ phone: { startsWith: SEED_PHONE_PREFIX } }, { id: { startsWith: SEED } }],
+    },
+    select: { id: true, fullName: true, role: true },
+    orderBy: { createdAt: "asc" },
+    take: PORTAL_PROFILES.length,
+  });
+
+  if (portalUsers.length === 0) {
+    console.log(
+      "   لا حساب حقيقي (‏RESIDENT/OWNER) في القاعدة — تخطّي.\n" +
+        "   سجّل دخولك مرّة على /login ثم أعد البذر ليُربَط حسابك.",
+    );
+    return;
+  }
+
+  /*
+   * ⚠️ **الشقق الفارغة وحدها.** أخذُ شقّة مسكونة يصطدم بالفهرس الفريد
+   * «عقد نشط لكل (شقة + نوع)» — ورسالتُه صحيحة، لكنها تُفشل البذر كلّه
+   * في منتصفه وتترك القاعدة نصف مبذورة.
+   */
+  const free = await prisma.apartment.findMany({
+    where: { id: { in: [...apartmentIds] }, occupancyStatus: "VACANT" },
+    select: { id: true, displayNumber: true },
+    orderBy: { displayNumber: "asc" },
+  });
+
+  if (free.length < 2) {
+    console.log(`   شقق فارغة غير كافية (${free.length}) — تخطّي.`);
+    return;
+  }
+
+  /*
+   * ⚠️ **الصندوق قبل أي مال.** `payment_cash_needs_drawer` (‏B4) يمنع
+   * الدفعة والمقدّمة وتعليمَ القسط مدفوعاً — ثلاثتها قبضُ نقد.
+   */
+  const openDrawer = await openMyCashDrawer({}, actor);
+  const drawerSessionId = openDrawer.ok ? openDrawer.data.sessionId : null;
+
+  /** شقّة صاحب العقد — يُلحَق بها فردُ الأسرة في الملفّ الثالث. */
+  let holderApartmentId: string | null = null;
+  let freeIndex = 0;
+
+  try {
+    for (const [index, user] of portalUsers.entries()) {
+      const profile = PORTAL_PROFILES[index]!;
+      console.log(`   ${user.fullName} ← ${profile.label}`);
+
+      /* ── فرد الأسرة: رابطٌ على بيت غيره، بلا عقد ولا حساب ─────────── */
+      if (profile.tenancy === "FAMILY") {
+        if (!holderApartmentId) {
+          console.log("      لا شقّة صاحب عقد سابقة — تخطّي.");
+          continue;
+        }
+        const already = await prisma.apartmentResident.findFirst({
+          where: { apartmentId: holderApartmentId, userId: user.id },
+          select: { id: true },
+        });
+        if (!already) {
+          must(
+            await linkResidentToApartment(
+              {
+                apartmentId: holderApartmentId,
+                userId: user.id,
+                relationType: "FAMILY_MEMBER",
+                isContractHolder: false,
+              },
+              actor,
+            ),
+            `ربط ${user.fullName} فرداً`,
+          );
+        }
+        console.log("      رُبط فرداً في بيت صاحب العقد — بلا مال");
+        continue;
+      }
+
+      /* ── إعادة التشغيل بلا `--reset` لا تُضاعف ────────────────────── */
+      const existing = await prisma.contract.findFirst({
+        where: { holderUserId: user.id, status: "ACTIVE", apartmentId: { in: [...apartmentIds] } },
+        select: { apartmentId: true },
+      });
+      if (existing) {
+        holderApartmentId ??= existing.apartmentId;
+        console.log("      له عقد نشط سلفاً — تخطّي (شغّل `--reset` لإعادة البناء)");
+        continue;
+      }
+
+      const apartment = free[freeIndex]!;
+      freeIndex += 1;
+
+      /*
+       * ⚠️ **المستأجر يحتاج مالكاً أيضاً.** خدمتان إلزاميتان يدفعهما
+       * المالك (‏الأمن · المصعد)، وشقةٌ بعقد إيجار وحده لا حساب مالك لها
+       * فيرفض `R28` تحميلهما. والرفض صحيح: لا أحد يُقيَّد عليه.
+       */
+      if (profile.tenancy === "TENANT") {
+        const ownerName = `${pick(FIRST_M)} ${pick(LAST)}`;
+        const owner = must(
+          await createResident({ fullName: ownerName, phone: phone(), gender: "MALE" }, actor),
+          `مالك ${ownerName}`,
+        );
+        const saleContract = must(
+          await createContract(
+            {
+              apartmentId: apartment.id,
+              holderUserId: owner.id,
+              type: "SALE",
+              startDate: new Date(Date.now() - 900 * 86_400_000),
+              totalAmountIqd: BigInt(between(120, 220) * 1_000_000),
+              paymentType: "FULL",
+            },
+            actor,
+          ),
+          "عقد تمليك المؤجِّر",
+        );
+        must(await activateContract({ contractId: saleContract.id }, actor), "تفعيل تمليك المؤجِّر");
+        /*
+         * ── 🔴 `isContractHolder: false` للمؤجِّر ──────────────────────
+         * `uniq_contract_holder_per_apartment` يسمح بواحد لكل شقة، وصاحبُه
+         * هنا **الساكن** لا المالك الغائب: هو من يظهر في «أفراد الشقة»
+         * بوسم «صاحب العقد»، وهو من بيده عقد الإيجار فعلاً.
+         *
+         * ⚠️ وكانت الاثنتان `true` فرُدّت الثانية بـ`ConflictError` — ومرّ
+         * الرفض صامتاً لأن جواب الربط لم يكن يُفحَص، فظهر بعد خطوتين
+         * كـ«لا تُنشئ طلباً على شقة ليست لك»: الرابط لم يوجد أصلاً.
+         */
+        must(
+          await linkResidentToApartment(
+            { apartmentId: apartment.id, userId: owner.id, relationType: "OTHER", isContractHolder: false },
+            actor,
+          ),
+          "ربط المؤجِّر",
+        );
+      }
+
+      const contract = must(
+        await createContract(
+          profile.tenancy === "TENANT"
+            ? {
+                apartmentId: apartment.id,
+                holderUserId: user.id,
+                type: "RENTAL" as const,
+                startDate: new Date(Date.now() - 420 * 86_400_000),
+                endDate: new Date(Date.now() + 300 * 86_400_000),
+                rentAmountIqd: BigInt(between(500, 850) * 1_000),
+                rentCycle: "MONTHLY" as const,
+              }
+            : {
+                apartmentId: apartment.id,
+                holderUserId: user.id,
+                type: "SALE" as const,
+                startDate: new Date(Date.now() - 760 * 86_400_000),
+                totalAmountIqd: BigInt(between(140, 200) * 1_000_000),
+                paymentType: "FULL" as const,
+              },
+          actor,
+        ),
+        `عقد ${user.fullName}`,
+      );
+      must(await activateContract({ contractId: contract.id }, actor), "تفعيل العقد");
+
+      must(
+        await linkResidentToApartment(
+          {
+            apartmentId: apartment.id,
+            userId: user.id,
+            relationType: "OTHER",
+            isContractHolder: true,
+          },
+          actor,
+        ),
+        `ربط ${user.fullName} بالشقة ${apartment.displayNumber}`,
+      );
+
+      if (profile.tenancy === "HOLDER") holderApartmentId = apartment.id;
+
+      /* ── أفراد البيت ─────────────────────────────────────────────── */
+      for (let m = 0; m < profile.household; m += 1) {
+        const [memberName, gender] = HOUSEHOLD_NAMES[m % HOUSEHOLD_NAMES.length]!;
+        const member = must(
+          await createResident(
+            { fullName: `${memberName}`, phone: phone(), gender },
+            actor,
+          ),
+          `فرد أسرة ${memberName}`,
+        );
+        must(
+          await linkResidentToApartment(
+            {
+              apartmentId: apartment.id,
+              userId: member.id,
+              relationType: "FAMILY_MEMBER",
+              isContractHolder: false,
+            },
+            actor,
+          ),
+          `ربط ${memberName}`,
+        );
+      }
+
+      /*
+       * ⚠️ **الإشغال آخر خطوات البناء.** هو من يُنشئ الاشتراكات الإلزامية
+       * ويُقيّدها بالتناسب (‏B2) — واستدعاؤه قبل العقد يفشل لأن الحساب لا
+       * يُحلّ بلا عقد نشط (‏R28).
+       */
+      must(
+        await setApartmentOccupancy(
+          {
+            apartmentId: apartment.id,
+            occupancyStatus:
+              profile.tenancy === "TENANT" ? "OCCUPIED_BY_TENANT" : "OCCUPIED_BY_OWNER",
+          },
+          actor,
+        ),
+        "ضبط الإشغال",
+      );
+
+      /* ── اشتراكات اختيارية بثلاث حالات ───────────────────────────── */
+      if (profile.optionalServices) {
+        const optional = await prisma.service.findMany({
+          where: {
+            name: { in: ["خدمة المولّدة", "خدمة موقف إضافي", "خدمة تنظيف عميق"] },
+          },
+          select: { id: true, name: true, pricingModel: true },
+          orderBy: { name: "asc" },
+        });
+
+        for (const [sIndex, service] of optional.entries()) {
+          const sub = await createSubscription(
+            {
+              serviceId: service.id,
+              subjectType: "APARTMENT",
+              apartmentId: apartment.id,
+              ...(service.pricingModel === "PER_UNIT" ? { quantity: between(3, 8) } : {}),
+            },
+            actor,
+          );
+          if (!sub.ok) continue;
+
+          /*
+           * ⚠️ ثلاث نهايات لا واحدة: مقبول · معلَّق · ملغى. وشاشةٌ تُبنى
+           * على المقبول وحده تُخفي المعلَّق — فيطلبه الساكن ثانيةً.
+           */
+          if (sIndex % 3 === 0) {
+            await approveSubscription({ subscriptionId: sub.data.id }, actor);
+          } else if (sIndex % 3 === 2) {
+            await approveSubscription({ subscriptionId: sub.data.id }, actor);
+            await cancelSubscription(
+              { subscriptionId: sub.data.id, reason: "بطلب الساكن" },
+              actor,
+            );
+          }
+        }
+      }
+
+      /* ── خطة الأقساط ─────────────────────────────────────────────── */
+      if (profile.plan) {
+        /*
+         * ⚠️ **بدايةٌ في الماضي بعيداً.** ‏36 قسطاً من قبل عشرين شهراً
+         * تُنتج مدفوعاً ومتأخّراً وقادماً في جدول واحد — وهو الفرق الذي
+         * تُختبَر به ألوان الشاشة. وخطةٌ كلّها في المستقبل تعرض عموداً
+         * واحداً بلون واحد.
+         */
+        const plan = await createInstallmentPlan(
+          {
+            contractId: contract.id,
+            totalAmountIqd: BigInt(180 * 1_000_000),
+            downPaymentIqd: BigInt(20 * 1_000_000),
+            installmentsCount: 36,
+            intervalMonths: 1,
+            startDate: new Date(Date.now() - 610 * 86_400_000),
+          },
+          actor,
+        );
+        if (plan.ok) {
+          await runInstallmentCharges();
+
+          /* أوّل ستّة أقساط مدفوعة — كي يُرى «مدفوع» بجانب «متأخّر» */
+          const due = await prisma.installment.findMany({
+            where: { planId: plan.data.id, status: { in: ["OVERDUE", "PENDING"] } },
+            select: { id: true },
+            orderBy: { sequence: "asc" },
+            take: 6,
+          });
+          for (const installment of due) {
+            await markInstallmentPaid(
+              { installmentId: installment.id, notes: "تسديد نقدي في المركز" },
+              actor,
+            );
+          }
+        } else {
+          console.log(`      تعذّرت الخطة: ${plan.error.message}`);
+        }
+      }
+
+      /* ── الدفعات → الفواتير ──────────────────────────────────────── */
+      if (profile.payments > 0) {
+        const account = await prisma.account.findUnique({
+          where: { contractId: contract.id },
+          select: { id: true },
+        });
+        if (account) {
+          for (let p = 0; p < profile.payments; p += 1) {
+            /*
+             * ⚠️ مبالغ **متفاوتة** لا ثابتة: عمود مبلغٍ متطابق في ثمانٍ
+             * وعشرين فاتورة يجعل الفرز والتصفيح يبدوان عاملين وهما لا
+             * يغيّران شيئاً مرئياً.
+             */
+            await recordCashPayment(
+              {
+                accountId: account.id,
+                amountIqd: BigInt(between(15, 90) * 5_000),
+                notes: `تسديد ${p + 1}`,
+              },
+              actor,
+            );
+          }
+        }
+      }
+
+      /* ── المركبات والباجات ───────────────────────────────────────── */
+      /*
+       * ⚠️ كتابة مباشرة لا عبر إجراء — إجراءات المركبات لم تُبنَ (الخطوة
+       * 4.1) وإصدار الباج محجوب بـ`B3`. والسبب يُقال لا يُخفى.
+       *
+       * وأربع حالات مقصودة: باجٌ ساري · باجٌ **منتهٍ وحالتُه `ISSUED`**
+       * (هذا ما يكشفه `effectiveStatus` في الشاشة) · مركبة معلَّقة بلا باج
+       * · مركبة مرفوضة.
+       */
+      const PLATE_PROVINCES = ["بغداد", "البصرة", "أربيل", "النجف"];
+      const VEHICLE_MAKES = ["تويوتا", "كيا", "هيونداي", "نيسان"];
+      for (let v = 0; v < profile.vehicles; v += 1) {
+        const status = v === 2 ? "PENDING_APPROVAL" : v === 3 ? "REJECTED" : "APPROVED";
+        const vehicle = await prisma.vehicle.create({
+          data: {
+            apartmentId: apartment.id,
+            ownerUserId: user.id,
+            plateNumber: `${between(10, 99)} ${String(between(10000, 99999))}`,
+            plateProvince: pick(PLATE_PROVINCES),
+            make: pick(VEHICLE_MAKES),
+            color: pick(["أبيض", "أسود", "فضّي", "رمادي"]),
+            status,
+          },
+          select: { id: true },
+        });
+
+        if (status !== "APPROVED") continue;
+        const expired = v === 1;
+        await prisma.badge.create({
+          data: {
+            vehicleId: vehicle.id,
+            code: `BDG-P${String(index)}${String(v)}`,
+            status: "ISSUED",
+            issuedAt: new Date(Date.now() - between(90, 400) * 86_400_000),
+            expiresAt: expired
+              ? new Date(Date.now() - between(5, 45) * 86_400_000)
+              : new Date(Date.now() + between(90, 300) * 86_400_000),
+            issuedByUserId: actor.userId,
+          },
+        });
+      }
+
+      /* ── الطلبات والشكاوى ────────────────────────────────────────── */
+      const task = await prisma.departmentTask.findFirst({
+        where: { isActive: true },
+        select: { id: true },
+      });
+
+      for (let r = 0; r < profile.requests; r += 1) {
+        const [type, scope, title, description, outcome] = PORTAL_REQUESTS[r]!;
+        const common = scope === "COMMON_AREA";
+
+        /* ⚠️ **باسم الساكن** لا الأدمن: البوّابة ترشّح بـ`createdByUserId` */
+        const created = await createRequestFor(user.id, {
+          type,
+          scope,
+          ...(common ? {} : { apartmentId: apartment.id }),
+          title,
+          description,
+          ...(task && !common ? { departmentTaskId: task.id } : {}),
+        });
+
+        /* تعليقٌ داخليّ وآخر ظاهر — به تُختبَر تصفية البوّابة بصرياً */
+        if (r % 4 === 0) {
+          await addRequestComment(
+            {
+              requestId: created.id,
+              body: "ملاحظة داخلية: تأكّد من توفّر القطعة قبل زيارة الفنّي.",
+              isInternal: true,
+            },
+            actor,
+          );
+          await addRequestComment(
+            { requestId: created.id, body: "سيصل الفنّي خلال يومين.", isInternal: false },
+            actor,
+          );
+        }
+
+        if (outcome === "NEW") continue;
+        await setRequestStatus(
+          {
+            requestId: created.id,
+            status: outcome,
+            ...(outcome === "DONE"
+              ? { resolutionNote: "أُصلح العطل وجُرّب أمام الساكن." }
+              : {}),
+          },
+          actor,
+        );
+      }
+    }
+  } finally {
+    /* ⚠️ الإقفال في `finally`: صندوقٌ مفتوح يمنع فتح غيره في التشغيل التالي */
+    if (drawerSessionId) {
+      const summary = await getCashDrawer({ sessionId: drawerSessionId }, actor);
+      await closeCashDrawer(
+        {
+          sessionId: drawerSessionId,
+          declaredIqd: summary.ok ? summary.data.expectedIqd : 0n,
+          notes: "إقفال بذر البوّابة",
+        },
+        actor,
+      );
+    }
   }
 }
 
@@ -659,9 +1265,13 @@ async function main(): Promise<void> {
     );
     must(await activateContract({ contractId: ownerContract.id }, actor), "تفعيل التمليك");
 
-    await linkResidentToApartment(
-      { apartmentId, userId: holder.id, relationType: "OTHER", isContractHolder: true },
-      actor,
+    /* ⚠️ يُفحَص جوابه: ربطٌ يُردّ صامتاً يظهر لاحقاً كخطأ لا صلة له بسببه */
+    must(
+      await linkResidentToApartment(
+        { apartmentId, userId: holder.id, relationType: "OTHER", isContractHolder: true },
+        actor,
+      ),
+      `ربط ${fullName}`,
     );
 
     if (rented) {
@@ -686,9 +1296,12 @@ async function main(): Promise<void> {
         "عقد الإيجار",
       );
       must(await activateContract({ contractId: rentContract.id }, actor), "تفعيل الإيجار");
-      await linkResidentToApartment(
-        { apartmentId, userId: tenant.id, relationType: "OTHER", isContractHolder: false },
-        actor,
+      must(
+        await linkResidentToApartment(
+          { apartmentId, userId: tenant.id, relationType: "OTHER", isContractHolder: false },
+          actor,
+        ),
+        `ربط ${tenantName}`,
       );
     }
 
@@ -699,9 +1312,12 @@ async function main(): Promise<void> {
         await createResident({ fullName: memberName, phone: phone(), gender: "FEMALE" }, actor),
         `فرد أسرة ${memberName}`,
       );
-      await linkResidentToApartment(
-        { apartmentId, userId: member.id, relationType: "FAMILY_MEMBER", isContractHolder: false },
-        actor,
+      must(
+        await linkResidentToApartment(
+          { apartmentId, userId: member.id, relationType: "FAMILY_MEMBER", isContractHolder: false },
+          actor,
+        ),
+        `ربط ${memberName}`,
       );
     }
 
@@ -961,6 +1577,8 @@ async function main(): Promise<void> {
   }
 
   console.log(`   ${requestCount} طلباً وشكوى`);
+
+  await seedResidentPortal(actor, apartmentIds);
 
   const counts = await prisma.$transaction([
     prisma.user.count(),
