@@ -52,7 +52,12 @@ export default async function MyRequestsPage({
   const page = pageNumber(p["page"]);
   const actor = { userId: me.id, role: me.role };
 
-  const requests = await listServiceRequests({ page, pageSize: 25 }, actor);
+  /*
+   * ⚠️ **`mine: true` صراحةً.** الصفحة عنوانها «طلباتي»، ويفتحها الساكن
+   * والموظّف المقيم والأدمن والمالك. والنطاق في الإجراء كان مشروطاً بدور
+   * `RESIDENT` وحده — فمن ليس ساكناً كان يقرأ طلبات المجمَّع كلّه تحتها.
+   */
+  const requests = await listServiceRequests({ page, pageSize: 25, mine: true }, actor);
 
   if (!requests.ok) {
     return (
@@ -60,9 +65,8 @@ export default async function MyRequestsPage({
     );
   }
 
-  const { rows, total, pageSize } = requests.data;
-
-  const open = rows.filter((r) => r.status !== "DONE" && r.status !== "CANCELLED").length;
+  /* ⚠️ `openTotal` من القاعدة لا `rows.filter` من الصفحة: العدّ لا يتغيّر بالتصفيح */
+  const { rows, total, openTotal, pageSize } = requests.data;
 
   return (
     <div className="flex flex-col gap-6">
@@ -71,8 +75,8 @@ export default async function MyRequestsPage({
         description="ما طلبتَه وما آل إليه. الطلب الجديد يُرفَع عبر الإدارة."
         actions={
           rows.length > 0 ? (
-            <Badge variant={open > 0 ? "warning" : "success"}>
-              <span className="tabular">{open}</span> مفتوح
+            <Badge variant={openTotal > 0 ? "warning" : "success"}>
+              <span className="tabular">{openTotal}</span> مفتوح
             </Badge>
           ) : null
         }

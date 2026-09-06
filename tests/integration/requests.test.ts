@@ -366,6 +366,64 @@ describe("نطاق الساكن والموظّف", () => {
     expect(listed.data.total).toBe(1);
   });
 
+  it("🔴 `mine` يقصر «طلباتي» على صاحبها مهما كان دوره", async () => {
+    /*
+     * صفحة `/app/requests` عنوانها «طلباتي وشكاواي»، ويفتحها الساكن
+     * **والموظّف والأدمن والمالك** (‏Q41: موظّفٌ يسكن المجمَّع). والنطاق
+     * كان مشروطاً بـ`role === "RESIDENT"` وحده — فمن ليس ساكناً كان يقرأ
+     * تحت ذلك العنوان قائمةَ طلبات المجمَّع كلّه.
+     */
+    const theirs = await makeRequest(admin);
+    const mine = await makeResidentRequest();
+
+    /* بلا العَلَم: الأدمن يرى الاثنين — وهذا صحيح في `/admin/requests` */
+    const wide = await listServiceRequests({}, admin);
+    if (!wide.ok) throw new Error(wide.error.message);
+    expect(wide.data.rows.some((x) => x.id === theirs.id)).toBe(true);
+    expect(wide.data.rows.some((x) => x.id === mine.id)).toBe(true);
+
+    /* ومعه: ما أنشأه هو وحده */
+    const narrow = await listServiceRequests({ mine: true }, admin);
+    if (!narrow.ok) throw new Error(narrow.error.message);
+    expect(
+      narrow.data.rows.some((x) => x.id === mine.id),
+      "سرّب `mine` طلب ساكن آخر إلى صفحة «طلباتي»",
+    ).toBe(false);
+    expect(narrow.data.rows.every((x) => x.id === theirs.id)).toBe(true);
+
+    /* ⚠️ ويضيّق ولا يوسّع: الساكن يبقى محصوراً بدوره حين يغيب العَلَم */
+    const asResident = await listServiceRequests({}, resident);
+    if (!asResident.ok) throw new Error(asResident.error.message);
+    expect(asResident.data.rows.every((x) => x.id === mine.id)).toBe(true);
+  });
+
+  it("`openTotal` يُعدّ من القاعدة لا من الصفحة المعروضة", async () => {
+    /*
+     * ⚠️ كانت الشاشة تحسبه بـ`rows.filter(...)` — أي الصفحة وحدها. فرقمٌ
+     * يتغيّر عند الضغط على «التالي» ليس عدّاً بل صدفة.
+     */
+    const a = await makeResidentRequest();
+    await makeResidentRequest();
+    await makeResidentRequest();
+
+    await setRequestStatus(
+      { requestId: a.id, status: "DONE", resolutionNote: "أُنجز." },
+      admin,
+    );
+
+    const firstPage = await listServiceRequests({ page: 1, pageSize: 1 }, resident);
+    if (!firstPage.ok) throw new Error(firstPage.error.message);
+
+    expect(firstPage.data.rows.length, "الصفحة صفٌّ واحد").toBe(1);
+    expect(firstPage.data.total).toBe(3);
+    /* مفتوحان من ثلاثة — ولا يتغيّر بتغيّر الصفحة */
+    expect(firstPage.data.openTotal).toBe(2);
+
+    const secondPage = await listServiceRequests({ page: 2, pageSize: 1 }, resident);
+    if (!secondPage.ok) throw new Error(secondPage.error.message);
+    expect(secondPage.data.openTotal).toBe(2);
+  });
+
   it("🔴 الموظّف يُحرّك ما أُسنِد إليه وحده", async () => {
     const req = await makeRequest();
 

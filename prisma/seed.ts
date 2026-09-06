@@ -198,6 +198,38 @@ function must<T>(result: ActionResult<T>, what: string): T {
   return result.data;
 }
 
+/**
+ * ── 🔴 العدّادان يبدآن من حيث انتهت القاعدة لا من الصفر ─────────────
+ * `phone()` و`email()` عدّادان في الوحدة، يبدآن بصفر في **كل تشغيل**.
+ * فالتشغيل الثاني بلا `--reset` يولّد نفس الأرقام ونفس البُرد، ويُردّ
+ * بـ«الهاتف مسجَّل لمستخدم آخر» عند أوّل موظّف.
+ *
+ * وهذا ما كان يجعل `--reset` الطريقَ الوحيد للبذر مرّتين — والطريقَ الذي
+ * حذف صفّ مستخدم حقيقي. فإصلاحُ هذين هو ما يجعل البذر الآمن ممكناً أصلاً.
+ *
+ * ⚠️ والترتيب النصّي يصحّ هنا لأن اللاحقة **ثابتة العرض** (خمسة أرقام
+ * بأصفار بادئة). ولو صارت متغيّرة العرض لعاد `"9" > "10"` وانكسر.
+ */
+async function primeCounters(): Promise<void> {
+  const lastPhone = await prisma.user.findFirst({
+    where: { phone: { startsWith: SEED_PHONE_PREFIX } },
+    orderBy: { phone: "desc" },
+    select: { phone: true },
+  });
+  if (lastPhone) {
+    phoneCounter = Number(lastPhone.phone.slice(SEED_PHONE_PREFIX.length)) || 0;
+  }
+
+  const lastEmail = await prisma.user.findFirst({
+    where: { email: { endsWith: "@example.com" } },
+    orderBy: { email: "desc" },
+    select: { email: true },
+  });
+  if (lastEmail?.email) {
+    emailCounter = Number(lastEmail.email.replace(/\D/gu, "")) || 0;
+  }
+}
+
 async function resolveActor(): Promise<ActorContext> {
   /**
    * ── ⚠️ الفاعل **أدمن** لا مالك ─────────────────────────────────────
@@ -1000,6 +1032,7 @@ async function main(): Promise<void> {
   if (RESET) await reset();
 
   const actor = await resolveActor();
+  await primeCounters();
   console.log("── الأقسام والمهارات والمورّدون ──");
 
   /**
@@ -1026,7 +1059,17 @@ async function main(): Promise<void> {
     departments.set(d.name, must(r, `قسم ${d.name}`).id);
   }
 
+  /*
+   * ⚠️ **والمهارات مثل الأقسام** — وقد كانت وحدها بلا حرس وجود، فينفجر
+   * التشغيل الثاني بلا `--reset` عند أوّل مهارة. والتعليق فوق يقول «البذر
+   * يُعاد تشغيله»، فكان يعد بما لا يفي.
+   *
+   * ولذلك أثرٌ أبعد من الإزعاج: من أراد بذراً ثانياً لم يبقَ أمامه إلا
+   * `--reset`، وهو الأخطر — وهو الذي حذف صفّ مستخدم حقيقي.
+   */
   for (const name of SKILLS) {
+    const existing = await prisma.skill.findFirst({ where: { name }, select: { id: true } });
+    if (existing) continue;
     must(await createSkill({ name }, actor), `مهارة ${name}`);
   }
 
@@ -1164,6 +1207,12 @@ async function main(): Promise<void> {
   console.log("── البنايات والشقق ──");
   const apartmentIds: string[] = [];
   for (const b of BUILDINGS) {
+    /* ⚠️ مرجعيّ كالأقسام: يُعاد استعماله إن وُجد بدل أن يُفجّر التشغيل الثاني */
+    const existingBuilding = await prisma.building.findFirst({
+      where: { code: b.code },
+      select: { id: true },
+    });
+    if (existingBuilding) continue;
     must(
       await createBuilding(
         {
@@ -1220,10 +1269,25 @@ async function main(): Promise<void> {
   let sold = 0;
   let rentedCount = 0;
   let vacant = 0;
+  let kept = 0;
 
   for (const [i, apartmentId] of apartmentIds.entries()) {
     if (i % 5 === 4) {
       vacant += 1;
+      continue;
+    }
+
+    /*
+     * ⚠️ **شقّة عليها عقد نشط تُترك كما هي.** الفهرس الفريد «عقد نشط لكل
+     * (شقة + نوع)» يرفض الثاني — بحقّ. وبلا هذا الحرس ينفجر أوّل تشغيل
+     * ثانٍ بلا `--reset` عند أوّل شقة، فلا يصل إلى ما بعده أبداً.
+     */
+    const occupiedAlready = await prisma.contract.findFirst({
+      where: { apartmentId, status: "ACTIVE" },
+      select: { id: true },
+    });
+    if (occupiedAlready) {
+      kept += 1;
       continue;
     }
 
@@ -1341,7 +1405,10 @@ async function main(): Promise<void> {
     else sold += 1;
   }
 
-  console.log(`   ${sold} يسكنها مالكها · ${rentedCount} مؤجَّرة · ${vacant} فارغة`);
+  console.log(
+    `   ${sold} يسكنها مالكها · ${rentedCount} مؤجَّرة · ${vacant} فارغة` +
+      (kept > 0 ? ` · ${kept} بقيت كما هي` : ""),
+  );
 
   // ── خطط الأقساط — الخطوة 3.5 · القرار B1 ──────────────────────────
   /**

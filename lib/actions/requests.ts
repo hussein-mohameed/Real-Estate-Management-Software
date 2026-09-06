@@ -337,20 +337,34 @@ export const listServiceRequests = defineAction({
       departmentId: z.string().optional(),
       assignedStaffId: z.string().optional(),
       search: z.string().trim().min(1).max(80).optional(),
+      /**
+       * ── 🔴 «طلباتي» **صفة الصفحة لا صفة الدور** ────────────────────
+       * كان النطاق مشروطاً بـ`role === "RESIDENT"` وحده. و`/app/requests`
+       * يفتحه الساكن **والموظّف والأدمن والمالك** (‏Q41: موظّفٌ يسكن
+       * المجمَّع). فمن ليس ساكناً كان يقرأ تحت عنوان «طلباتي وشكاواي»
+       * قائمةَ طلبات المجمَّع كلّه — أربعين طلباً لجيرانه بدل سبعة وعشرين
+       * له. عنوانٌ يكذب، وتسريبُ نطاق لا يقصده أحد.
+       *
+       * ⚠️ والعَلَم **يضيّق ولا يوسّع**: `true` يقصر على صاحبه أياً كان
+       * دوره، وغيابُه لا يمنح الساكن شيئاً — شرط دوره باقٍ تحته.
+       */
+      mine: z.boolean().optional(),
       page: z.number().int().min(1).default(1),
       pageSize: z.number().int().min(1).max(100).default(25),
     })
     .default({ page: 1, pageSize: 25 }),
   handler: async ({ input, actor, tx }) => {
     /*
-     * ⚠️ نطاق الساكن يُفرَض في `where` لا في العرض: قائمةٌ تُرجع طلبات
-     * الجيران ثم تُرشَّح في الصفحة أرسلتها فعلاً.
+     * ⚠️ النطاق يُفرَض في `where` لا في العرض: قائمةٌ تُرجع طلبات الجيران
+     * ثم تُرشَّح في الصفحة أرسلتها فعلاً.
      */
-    const residentScope =
-      actor.role === "RESIDENT" ? { createdByUserId: actor.userId } : {};
+    const ownScope =
+      input.mine === true || actor.role === "RESIDENT"
+        ? { createdByUserId: actor.userId }
+        : {};
 
     const where = {
-      ...residentScope,
+      ...ownScope,
       ...(input.status ? { status: input.status } : {}),
       ...(input.type ? { type: input.type } : {}),
       ...(input.scope ? { scope: input.scope } : {}),
@@ -371,7 +385,7 @@ export const listServiceRequests = defineAction({
         : {}),
     };
 
-    const [rows, total] = await Promise.all([
+    const [rows, total, openTotal] = await Promise.all([
       tx.serviceRequest.findMany({
         where,
         /*
@@ -397,9 +411,20 @@ export const listServiceRequests = defineAction({
         },
       }),
       tx.serviceRequest.count({ where }),
+      /**
+       * ── 🔴 «المفتوح» يُعدّ من القاعدة لا من الصفحة ──────────────────
+       * كانت الشاشة تحسبه بـ`rows.filter(...)` — أي **الصفحة المعروضة
+       * وحدها**. فمن له سبعة وعشرون طلباً يقرأ «١٢ مفتوح» وفي الثانية
+       * أربعة أخرى، ثم يضغط «التالي» فيتغيّر العدد أمامه.
+       *
+       * ورقمٌ يتغيّر بتغيّر الصفحة ليس عدّاً بل صدفة.
+       */
+      tx.serviceRequest.count({
+        where: { ...where, status: { notIn: ["DONE", "CANCELLED"] } },
+      }),
     ]);
 
-    return { rows, total, page: input.page, pageSize: input.pageSize };
+    return { rows, total, openTotal, page: input.page, pageSize: input.pageSize };
   },
 });
 
