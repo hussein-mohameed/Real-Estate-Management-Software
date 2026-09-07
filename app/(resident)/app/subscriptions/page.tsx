@@ -1,4 +1,8 @@
+import Link from "next/link";
+import { Plus } from "lucide-react";
 import { requireRoleOrRedirect } from "@/lib/auth/guard";
+import { Button } from "@/components/ui/button";
+import { RequestCancelButton, WithdrawCancelButton } from "./cancel-button";
 import { getMySubscriptions } from "@/lib/actions/resident-portal";
 import { Money } from "@/components/ui/money";
 import { Ltr } from "@/components/ui/ltr";
@@ -46,6 +50,14 @@ export default async function MySubscriptionsPage() {
       <PageHeader
         title="اشتراكاتي"
         description="ما يُقيَّد على حسابك كل دورة. والمعلَّق ينتظر موافقة الإدارة."
+        actions={
+          <Button asChild className="gap-2">
+            <Link href="/app/subscriptions/new">
+              <Plus className="size-4" />
+              طلب اشتراك
+            </Link>
+          </Button>
+        }
       />
 
       <TableCard>
@@ -58,13 +70,19 @@ export default async function MySubscriptionsPage() {
               <TableHead>الدورة</TableHead>
               <TableHead>الفوترة القادمة</TableHead>
               <TableHead>الحالة</TableHead>
+              <TableHead className="w-0" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.length === 0 ? (
-              <TableEmpty colSpan={6}>
-                لا اشتراكات على حسابك. الخدمات الإلزامية تُضاف مع السكن، وغيرها
-                يُطلَب من الإدارة.
+              <TableEmpty colSpan={7}>
+                {/*
+                  ⚠️ النصّ كان يقول «يُطلَب من الإدارة» — وصار الطلب ممكناً
+                  من هنا. وحالةٌ فارغة تُحيل إلى مكانٍ آخر بينما الزرّ فوقها
+                  تناقضٌ يقرؤه المستخدم قبل أن يقرأ الزرّ.
+                */}
+                لا اشتراكات على حسابك. الإلزامية تُضاف مع السكن، وغيرها تطلبه
+                من «طلب اشتراك».
               </TableEmpty>
             ) : (
               rows.map((s) => (
@@ -110,6 +128,39 @@ export default async function MySubscriptionsPage() {
                     >
                       {SUBSCRIPTION_STATUS_AR[s.status]}
                     </Badge>
+                    {/*
+                      ⚠️ شارةٌ ثانية لا استبدالٌ للأولى: الاشتراك **ما زال
+                      نشطاً ويُفوتَر** وطلب الإلغاء معلّق. وعرضُ «إلغاء
+                      مطلوب» وحدها كان سيقول إن الفوترة توقّفت.
+                    */}
+                    {s.cancellationRequestedAt ? (
+                      <Badge variant="warning" className="ms-2">
+                        إلغاء مطلوب
+                      </Badge>
+                    ) : null}
+                  </TableCell>
+
+                  <TableCell className="text-end">
+                    {/*
+                      ⚠️ الزرّ للنشط غير الإلزامي وحده. والإلزامية يعيدها
+                      الإشغال إن أُلغيت، فطلبُ إلغائها دورةٌ عبثية — والخادم
+                      يردّها، فلا يُعرَض ما سيُردّ.
+                    */}
+                    {s.cancellationRequestedAt ? (
+                      /*
+                        ⚠️ **لصاحب الطلب وحده.** فردٌ آخر في البيت يرى
+                        الشارة ولا يملك زرّاً — إبطالُ طلب غيره طريقه
+                        الإدارة، لا ضغطةٌ صامتة على قرارٍ ماليّ.
+                      */
+                      s.cancellationIsMine ? (
+                        <WithdrawCancelButton subscriptionId={s.id} />
+                      ) : null
+                    ) : s.status === "ACTIVE" && !s.service.isMandatory ? (
+                      <RequestCancelButton
+                        subscriptionId={s.id}
+                        serviceName={s.service.name}
+                      />
+                    ) : null}
                   </TableCell>
                 </TableRow>
               ))

@@ -16,7 +16,13 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { approveAction, cancelAction, rejectAction, setQuantityAction } from "./actions";
+import {
+  approveAction,
+  cancelAction,
+  dismissCancellationAction,
+  rejectAction,
+  setQuantityAction,
+} from "./actions";
 
 /**
  * أفعال صفّ الاشتراك.
@@ -147,12 +153,15 @@ export function ActiveActions({
   serviceName,
   isPerUnit,
   quantity,
+  cancellationRequested = false,
 }: {
   subscriptionId: string;
   serviceName: string;
   /** الكمية تُغيَّر لـ`PER_UNIT` وحدها — عدد الأفراد مشتقّ (‏Q5). */
   isPerUnit: boolean;
   quantity: number;
+  /** طلب الساكن الإلغاء — يفتح زرّ الردّ ولا يغيّر بقيّة الأزرار. */
+  cancellationRequested?: boolean;
 }) {
   const { pending, error, run } = useAct();
   const [qtyOpen, setQtyOpen] = useState(false);
@@ -267,6 +276,22 @@ export function ActiveActions({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/*
+          ⚠️ **يظهر مع طلب الإلغاء وحده** — وبجانب زرّ الإلغاء لا بدلاً منه:
+          الأدمن أمام قرارين اثنين لا واحد، «أُلبّي» و«أردّ». وإخفاءُ أحدهما
+          يجعل التجاهل هو الخيار الثالث الصامت.
+        */}
+        {cancellationRequested ? (
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={pending}
+            onClick={() => run(() => dismissCancellationAction(subscriptionId, reason))}
+          >
+            ردّ طلب الإلغاء
+          </Button>
+        ) : null}
       </span>
       <ErrorLine message={error} />
     </span>

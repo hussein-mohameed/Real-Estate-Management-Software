@@ -13,7 +13,11 @@ import { createDepartment, createDepartmentTask } from "@/lib/actions/staff";
 import { setDepartmentTaskActive } from "@/lib/actions/departments";
 import { setUserActive } from "@/lib/actions/users";
 import { linkResidentToApartment } from "@/lib/actions/residents";
-import { addCommentFor, createRequestFor } from "@/lib/services/resident-requests";
+import {
+  addCommentFor,
+  createRequestFor,
+  requestableCategories,
+} from "@/lib/services/resident-requests";
 import type { ActorContext } from "@/lib/actions/define-action";
 import { prisma } from "@/lib/prisma";
 
@@ -422,6 +426,79 @@ describe("نطاق الساكن والموظّف", () => {
     const secondPage = await listServiceRequests({ page: 2, pageSize: 1 }, resident);
     if (!secondPage.ok) throw new Error(secondPage.error.message);
     expect(secondPage.data.openTotal).toBe(2);
+  });
+
+  it("🔴 الساكن يُنشئ طلبه بنفسه — §3.2 تمنحه «create + follow own»", async () => {
+    /*
+     * ── العيب الذي وُجد هذا الفحص من أجله ───────────────────────────
+     * نُزع نموذج الإنشاء من بوّابة الساكن جولةً كاملة، استناداً إلى قاعدة
+     * «لا كتابة للساكن». والقاعدة صحيحة في المال والعقود — وخاطئة هنا:
+     * المصفوفة تعطيه `O (create + follow own)` نصّاً.
+     *
+     * ⚠️ وسببُ الالتباس أن `LEVEL_ACTIONS.OWN` يمنح القراءة وحدها، فبدا
+     * أن المصفوفة تمنع ما تمنحه. هذا الفحص يقيس **السلوك** لا الخليّة.
+     */
+    const created = await createRequestFor(resident.userId, {
+      ...base,
+      scope: "APARTMENT",
+      apartmentId: f.apartmentId,
+      title: "تسرّب ماء تحت المغسلة",
+      description: "الماء يتسرّب من وصلة المغسلة منذ يومين.",
+    });
+
+    expect(created.number, "طلبٌ بلا رقم").toMatch(/^REQ-/u);
+    expect(created.status).toBe("NEW");
+
+    const row = await prisma.serviceRequest.findUnique({
+      where: { id: created.id },
+      select: { createdByUserId: true, priority: true },
+    });
+    /* ⚠️ المنشئ هو الساكن لا الموظّف: عليه تقوم بوّابته وكل تقرير «من اشتكى» */
+    expect(row?.createdByUserId).toBe(resident.userId);
+    /* والأولوية `NORMAL` دائماً — الساكن لا يختارها */
+    expect(row?.priority).toBe("NORMAL");
+  });
+
+  it("التصنيف يوجّه الطلب إلى قسمه — والقسم يُشتقّ لا يُختار", async () => {
+    const created = await createRequestFor(resident.userId, {
+      ...base,
+      scope: "APARTMENT",
+      apartmentId: f.apartmentId,
+      departmentTaskId: taskId,
+    });
+
+    const row = await prisma.serviceRequest.findUnique({
+      where: { id: created.id },
+      select: { departmentId: true, departmentTaskId: true },
+    });
+
+    expect(row?.departmentTaskId).toBe(taskId);
+    /*
+     * ⚠️ `departmentId` **مُشتقّ من المهمّة**. لو قُبل مستقلاً لأمكن أن
+     * يتناقضا، ويصير «أيّهما الصحيح؟» سؤالاً بلا جواب في البيانات.
+     */
+    expect(row?.departmentId, "القسم لم يُشتقّ من المهمّة").not.toBeNull();
+  });
+
+  it("كتالوج التصنيفات يستثني الموقوف — لا يُعرَض ما سيُردّ", async () => {
+    /*
+     * ⚠️ `requestableCategories` يقرأ المفعَّل وحده. وعرضُ مهمّة موقوفة
+     * يدعو الساكن إلى اختيارها ثم يردّ `createRequestFor` الاختيار — وهو
+     * نقيض سبب الإيقاف.
+     */
+    const before = await requestableCategories();
+    expect(before.some((c) => c.id === taskId), "المهمّة المفعَّلة غائبة").toBe(true);
+
+    await setDepartmentTaskActive({ taskId, isActive: false }, admin);
+    try {
+      const after = await requestableCategories();
+      expect(
+        after.some((c) => c.id === taskId),
+        "مهمّة موقوفة معروضة في الكتالوج",
+      ).toBe(false);
+    } finally {
+      await setDepartmentTaskActive({ taskId, isActive: true }, admin);
+    }
   });
 
   it("🔴 الموظّف يُحرّك ما أُسنِد إليه وحده", async () => {

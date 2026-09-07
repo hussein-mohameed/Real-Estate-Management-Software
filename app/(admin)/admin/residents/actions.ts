@@ -7,6 +7,10 @@ import {
   unlinkResident,
   updateResident,
 } from "@/lib/actions/residents";
+import {
+  approveResidentRequest,
+  rejectResidentRequest,
+} from "@/lib/actions/resident-requests-review";
 import { requireRole } from "@/lib/auth/guard";
 import type { ActionResult } from "@/lib/result";
 
@@ -87,4 +91,33 @@ export async function unlinkResidentAction(
     revalidatePath("/admin/apartments");
   }
   return result as ActionResult<{ promptSetVacant: boolean }>;
+}
+
+/**
+ * قرار طلب تعديل البيانات.
+ *
+ * ⚠️ **الموافقة تُطبّق التغيير** في نفس المعاملة — راجع
+ * `approveResidentRequest`. وطلبٌ «مقبول» ببياناتٍ لم تتغيّر يجعل الساكن
+ * ينتظر رمزاً على رقمٍ لم يُحدَّث.
+ */
+export async function approveChangeAction(
+  requestId: string,
+): Promise<ActionResult<unknown>> {
+  const me = await requireRole("ADMIN");
+  const r = await approveResidentRequest({ requestId }, { userId: me.id, role: me.role });
+  if (r.ok) revalidatePath("/admin/residents");
+  return r;
+}
+
+export async function rejectChangeAction(
+  requestId: string,
+  note: string,
+): Promise<ActionResult<unknown>> {
+  const me = await requireRole("ADMIN");
+  const r = await rejectResidentRequest(
+    { requestId, note },
+    { userId: me.id, role: me.role },
+  );
+  if (r.ok) revalidatePath("/admin/residents");
+  return r;
 }

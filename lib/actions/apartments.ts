@@ -9,6 +9,8 @@ import {
   OWNERSHIP_STATUS,
 } from "@/lib/domain/enums";
 import { now, startOfDayBaghdad } from "@/lib/dates";
+import { renderDisplayNumber } from "@/lib/domain/apartment-generator";
+import { violates } from "@/lib/db-errors";
 import {
   generateMandatorySubscriptions,
   pauseRecurringOnVacancy,
@@ -106,6 +108,115 @@ const constructionSchema = z.object({
   apartmentId: z.string().min(1),
   status: z.enum(CONSTRUCTION_STATUS),
   completionPercentage: z.number().int().min(0).max(100).optional(),
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════
+ *  إضافة شقة **مفردة** إلى بناية قائمة.
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * ── 🔴 لماذا لم تكن موجودة ──────────────────────────────────────────
+ * الشقق تُولَّد مع البناية (`createBuilding`) بالترقيم دفعةً واحدة. وذلك
+ * يغطّي اليوم الأول ولا يغطّي ما بعده: طابقٌ أُضيف، أو وحدة قُسّمت، أو
+ * شقة سقطت من التوليد الأول. وبلا هذا الإجراء كان الحلّ الوحيد إنشاء
+ * بناية ثانية — أو الكتابة في القاعدة يدوياً.
+ *
+ * ── ⚠️ و`displayNumberLocked = true` **دائماً** ─────────────────────
+ * المخطّط يقول ذلك صراحةً في `Q43`: بعد أي تعديل يدوي يُجمَّد رقم العرض
+ * ولا يُعاد توليده، لأن `seq` يُحسب من `unitsPerFloor` الموحّد — فتنكسر
+ * دلالة `SEQUENTIAL` بعد أي إضافة.
+ *
+ * وهذه **هي** الإضافة التي حذّر منها التعليق. فتجميدُه ليس احتياطاً بل
+ * تنفيذٌ لقرارٍ مكتوب.
+ *
+ * ── والرقم يُقترَح ولا يُفرَض ───────────────────────────────────────
+ * ⚠️ `seq` لشقّةٍ تُضاف في **وسط** البناية لا جواب صحيح له: أهو ترتيبها
+ * المكاني أم ترتيب إنشائها؟ فالإجراء يشتقّه من عدد الشقق الحالي (أي
+ * «أُضيفت في النهاية») ويقبل بديلاً صريحاً من الأدمن. والاشتقاق الصامت
+ * لما لا جواب له هو ما يُنتج أرقاماً لا يفهمها أحد بعد سنة.
+ */
+export const createApartment = defineAction({
+  name: "createApartment",
+  capability: "APARTMENTS",
+  kind: "write",
+  transactional: true,
+  auditAction: "apartment.create",
+  auditEntityType: "Apartment",
+  schema: z.object({
+    buildingId: z.string().min(1),
+    floorNumber: z.number().int().min(1).max(200),
+    unitNumber: z.number().int().min(1).max(200),
+    /** يُشتقّ من قالب البناية إن تُرك فارغاً. */
+    displayNumber: z.string().trim().max(40).optional(),
+    roomsCount: z.number().int().min(1).max(50).optional(),
+    constructionStatus: z.enum(CONSTRUCTION_STATUS).default("UNDER_CONSTRUCTION"),
+  }),
+  handler: async ({ input, tx }) => {
+    const building = await tx.building.findUnique({
+      where: { id: input.buildingId },
+      select: {
+        id: true,
+        code: true,
+        floorsCount: true,
+        displayNumberFormat: true,
+      },
+    });
+    if (!building) throw new NotFoundError("البناية");
+
+    const displayNumber =
+      input.displayNumber ??
+      renderDisplayNumber(building.displayNumberFormat, {
+        building: building.code,
+        floor: input.floorNumber,
+        unit: input.unitNumber,
+        seq: (await tx.apartment.count({ where: { buildingId: building.id } })) + 1,
+      });
+
+    try {
+      const created = await tx.apartment.create({
+        data: {
+          buildingId: building.id,
+          floorNumber: input.floorNumber,
+          unitNumber: input.unitNumber,
+          displayNumber,
+          /* ⚠️ Q43 — راجع التعليق أعلاه: كل مُضافة يدوياً مُجمَّدة */
+          displayNumberLocked: true,
+          ...(input.roomsCount === undefined ? {} : { roomsCount: input.roomsCount }),
+          constructionStatus: input.constructionStatus,
+          ...(input.constructionStatus === "DELIVERED" ? { deliveredAt: now() } : {}),
+        },
+        select: { id: true, displayNumber: true, floorNumber: true, unitNumber: true },
+      });
+
+      /*
+       * ⚠️ `floorsCount` يُرفَع ولا يُرفَع `unitsPerFloor`.
+       * الأول **واقعة** عن البناية يقرأها كل من يعرضها، وتركُه أقلّ من
+       * الحقيقة يجعل بنايةً من خمسة طوابق تُعرَض بأربعة. والثاني
+       * **افتراضٌ للتوليد** لا وصفٌ لكل طابق — ورفعُه يجعل التوليد التالي
+       * يُنشئ وحداتٍ لا وجود لها.
+       */
+      if (input.floorNumber > building.floorsCount) {
+        await tx.building.update({
+          where: { id: building.id },
+          data: { floorsCount: input.floorNumber },
+        });
+      }
+
+      return created;
+    } catch (error) {
+      if (violates(error, "uniq_apartment_unit_alive")) {
+        throw new BusinessRuleError(
+          `الوحدة ${input.unitNumber} في الطابق ${input.floorNumber} موجودة في هذه البناية.`,
+        );
+      }
+      if (violates(error, "uniq_apartment_display_alive")) {
+        throw new BusinessRuleError(
+          `رقم العرض «${displayNumber}» مستعمل سلفاً. اكتب رقماً مختلفاً.`,
+        );
+      }
+      throw error;
+    }
+  },
 });
 
 export const setApartmentConstructionStatus = defineAction({

@@ -1,4 +1,6 @@
-import { ClipboardList } from "lucide-react";
+import { ClipboardList, Plus } from "lucide-react";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import { requireRoleOrRedirect } from "@/lib/auth/guard";
 import { pageNumber, type SearchParams } from "@/lib/routes/search-params";
 import { listServiceRequests } from "@/lib/actions/requests";
@@ -32,14 +34,18 @@ import { formatBaghdadDate } from "@/lib/dates";
  * `listServiceRequests` يرشّح بـ`createdByUserId` للساكن داخل `where`.
  * قائمةٌ تُرجع طلبات الجيران ثم تُرشَّح في الصفحة **أرسلتها فعلاً**.
  *
- * ── 🔴 والبوّابة **للقراءة وحدها** ──────────────────────────────────
- * لا إنشاء ولا تعديل من الساكن في هذه الشاشات — قرار صاحب النظام. فالطلب
- * يُرفَع باتّصال أو مراجعة، وتُدخله الإدارة من `‏/admin/requests/new`.
+ * ── 🔴 والإنشاء **عاد** — والقاعدة العامّة لا تسري هنا ───────────────
+ * البوّابة للقراءة في المال والعقود والسكان: تلك بيانات تُقرَّر عن الساكن
+ * لا يقرّرها. أمّا الطلب فمصفوفة §3.2 تعطيه عليه **`O (create + follow
+ * own)`** — الإنشاء نصّاً، لا استنتاجاً.
  *
- * ⚠️ ونُزع النموذج **من الصفحة لا من الخادم**: النطاق البنيويّ في
- * `lib/services/resident-requests.ts` يبقى مبنيّاً ومختبَراً، لأن القرار
- * هنا قرار واجهة قد يُراجَع — لا قاعدة أمان. وحذفُ المنطق كان سيُلزم
- * إعادة كتابته وإعادة اختباره لو عاد الطلب الذاتي.
+ * ⚠️ وبوّابةٌ تعرض حالة الطلبات ولا تقبل طلباً تدفع الساكن إلى الهاتف،
+ * فيُدخل الموظّف الطلب نيابةً عنه — ويضيع من اشتكى ومتى وبأيّ لفظ، ويصير
+ * `createdByUserId` اسم الموظّف في كل صفّ.
+ *
+ * ✅ ونجا المنطق لأنه لم يُحذف يوم نُزع النموذج: `lib/services/
+ * resident-requests.ts` بقي مبنيّاً ومختبَراً على أساس أن ذلك «قرار واجهة
+ * قد يُراجَع لا قاعدة أمان» — فكلّف رجوعُه صفحةً واحدة لا إعادة بناء.
  */
 
 export default async function MyRequestsPage({
@@ -72,21 +78,41 @@ export default async function MyRequestsPage({
     <div className="flex flex-col gap-6">
       <PageHeader
         title="طلباتي وشكاواي"
-        description="ما طلبتَه وما آل إليه. الطلب الجديد يُرفَع عبر الإدارة."
+        description="ما طلبتَه وما آل إليه."
         actions={
-          rows.length > 0 ? (
-            <Badge variant={openTotal > 0 ? "warning" : "success"}>
-              <span className="tabular">{openTotal}</span> مفتوح
-            </Badge>
-          ) : null
+          <div className="flex items-center gap-3">
+            {rows.length > 0 ? (
+              <Badge variant={openTotal > 0 ? "warning" : "success"}>
+                <span className="tabular">{openTotal}</span> مفتوح
+              </Badge>
+            ) : null}
+            <Button asChild className="gap-2">
+              <Link href="/app/requests/new">
+                <Plus className="size-4" />
+                طلب جديد
+              </Link>
+            </Button>
+          </div>
         }
       />
 
       {rows.length === 0 ? (
+        /*
+         * ⚠️ الحالة الفارغة **تدعو إلى الفعل**. «لا طلبات بعد» وحدها تصف
+         * الفراغ ولا تقول ما يُفعل به — وهذه أوّل شاشة يراها ساكن جديد.
+         */
         <EmptyState
           icon={ClipboardList}
           title="لا طلبات بعد"
-          description="ما يُرفَع باسمك يظهر هنا بحالته، وتصلك ردود الإدارة عليه."
+          description="صِف مشكلتك وحدّد تصنيفها، ويصل الطلب إلى القسم المختصّ."
+          action={
+            <Button asChild className="gap-2">
+              <Link href="/app/requests/new">
+                <Plus className="size-4" />
+                طلب جديد
+              </Link>
+            </Button>
+          }
         />
       ) : (
         <>

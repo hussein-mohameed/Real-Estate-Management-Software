@@ -53,6 +53,9 @@ const NOT_IN_ANY_NAV = new Set([
   "/admin/requests/new", // زرّ «طلب جديد» في شاشة الطلبات
   "/admin/installments/new", // يُوصَل إليه من شاشة المتابعة
   "/admin/installments/migrate", // N3: يُستعمل مرّة عند إدخال النظام — رابطه في شاشة المتابعة لا في الشريط
+  "/app/requests/new", // زرّ «طلب جديد» في شاشة طلبات الساكن وفي حالتها الفارغة
+  "/app/subscriptions/new", // زرّ «طلب اشتراك» في شاشة اشتراكات الساكن
+  "/app/vehicles/new", // زرّ «تسجيل مركبة» في شاشة سيارات الساكن وفي حالتها الفارغة
 ]);
 
 describe("كل رابط في شريط التنقّل يشير إلى صفحة موجودة", () => {
@@ -143,13 +146,21 @@ describe("لا مجموعة تتكرّر متباعدةً في أي شريط", (
   for (const [name, items] of Object.entries(ALL_NAVS)) {
     it(name, () => {
       /* نفس منطق `groupNav`: التجاور يبدأ مجموعة */
-      const runs: string[] = [];
+      const runs: Array<string | null> = [];
       for (const item of items) {
-        if (runs.at(-1) !== item.group) runs.push(item.group);
+        const group = item.group ?? null;
+        if (runs.at(-1) !== group) runs.push(group);
       }
 
+      /*
+       * ⚠️ **البنود بلا مجموعة مستثناة.** الشريط يعرض لها مجموعتين بلا
+       * عنوان — «الرئيسية» في الأعلى و«ملفي» في الأسفل — ولا عنوان يتكرّر
+       * لأن لا عنوان أصلاً. والمفتاح مأخوذ من الرابط لا من العنوان، فلا
+       * يتصادم. أمّا العنوان المتكرّر فيبقى ممنوعاً كما كان.
+       */
       const seen = new Set<string>();
-      const repeated = runs.filter((g) => {
+      const repeated = runs.filter((g): g is string => {
+        if (g === null) return false;
         if (seen.has(g)) return true;
         seen.add(g);
         return false;
@@ -162,4 +173,62 @@ describe("لا مجموعة تتكرّر متباعدةً في أي شريط", (
       ).toEqual([]);
     });
   }
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════
+ *  الأيقونات — مفتاحٌ مستقلّ يجب أن يُصيَّر صورةً مستقلّة.
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * ── 🔴 العيب الذي وُجد هذا الفحص من أجله ────────────────────────────
+ * كانت إحدى عشرة أيقونة تخدم خمساً وعشرين وجهة: `ListChecks` على
+ * «الاشتراكات» و«الطلبات» و«الأقسام» و«طلباتي»، و`Wallet` على «كشف حسابي»
+ * و«الأقساط» و«صندوق النقد» — و`Home` على **«سيارتي»**.
+ *
+ * والاتحاد النصّي `NavIconKey` يحرس أن المفتاح مكتوب صحيحاً، ولا يحرس أن
+ * مفتاحين مختلفين يعطيان صورتين مختلفتين. فمرّ التكرار عبر الأنواع
+ * والبناء والتدقيق، ولم يظهر إلا في الشاشة.
+ *
+ * ⚠️ وأثرُه ليس تجميلياً: أيقونةٌ تَعِد بتمييز ثم تُخلفه تُعلّم المستخدم
+ * تجاهلها، فيعود إلى قراءة الشريط سطراً سطراً — وهو ما وُجدت لتمنعه.
+ */
+describe("الأيقونات", () => {
+  const src = readFileSync(
+    resolve(import.meta.dirname, "../..", "components/shell/app-sidebar.tsx"),
+    "utf8",
+  );
+
+  /** يقرأ جسم `const ICONS: Record<NavIconKey, LucideIcon> = { … }`. */
+  const body = /const ICONS: Record<NavIconKey, LucideIcon> = \{([\s\S]*?)\n\};/u.exec(src);
+
+  it("خريطة الأيقونات مقروءة من المصدر", () => {
+    expect(body, "تغيّر شكل تعريف ICONS — حدّث هذا الفحص معه").not.toBeNull();
+  });
+
+  it("🔴 لا أيقونة تخدم مفتاحين", () => {
+    const pairs = [...(body?.[1] ?? "").matchAll(/^\s*(\w+):\s*(\w+),/gmu)];
+    expect(pairs.length, "لم تُقرأ أي أزواج من ICONS").toBeGreaterThan(0);
+
+    const byIcon = new Map<string, string[]>();
+    for (const [, key, component] of pairs) {
+      byIcon.set(component!, [...(byIcon.get(component!) ?? []), key!]);
+    }
+
+    const shared = [...byIcon.entries()].filter(([, keys]) => keys.length > 1);
+    expect(
+      shared.map(([component, keys]) => `${component} ← ${keys.join(" · ")}`),
+      "أيقونة واحدة على مفتاحين: المفتاحان يبدوان مختلفين في lib/nav.ts ويُصيَّران متطابقين في الشريط.",
+    ).toEqual([]);
+  });
+
+  it("كل مفتاح مستعمل في قائمة له صورة", () => {
+    const mapped = new Set(
+      [...(body?.[1] ?? "").matchAll(/^\s*(\w+):/gmu)].map((m) => m[1]!),
+    );
+    for (const [name, items] of Object.entries(ALL_NAVS)) {
+      for (const item of items) {
+        expect(mapped.has(item.icon), `${name}: «${item.icon}» بلا صورة`).toBe(true);
+      }
+    }
+  });
 });

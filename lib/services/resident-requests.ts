@@ -148,3 +148,50 @@ export async function addCommentFor(
     select: { id: true, createdAt: true },
   });
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════
+ *  تصنيفات ما يُطلَب — كتالوج الساكن.
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * ── ⚠️ ولماذا لا تمرّ بـ`can()` ─────────────────────────────────────
+ * `DEPARTMENTS_SKILLS_STAFF` تعطي الساكن `NONE` — وهي محقّة: من يعمل في
+ * أي قسم، وما مهاراته، ومن المتواجد اليوم، ليست من شأنه.
+ *
+ * وهذا **ليس ذاك**. الساكن هنا لا يقرأ أقساماً ولا موظفين، بل يقرأ
+ * **قائمة ما يستطيع طلبه** — أقرب إلى `SERVICES_CATALOGUE` التي تعطيه
+ * `R (available ones)` منها إلى إدارة الأقسام. والإسقاط يقول ذلك بنفسه:
+ * الاسم والقسم لا غير — لا وصف، ولا موظفين، ولا عدد طلبات.
+ *
+ * ⚠️ **وبدونها لا يوجّه الساكن طلبه.** البديل أن يكتب «تسرّب» في وصفٍ
+ * حرّ فيقرأه موظّف استقبال ويحوّله يدوياً — خطوة بشرية كاملة على كل طلب،
+ * ومصدرُ تأخيرٍ لا يظهر في أي شاشة.
+ *
+ * وهو رابع موضع للنطاق البنيويّ بعد `staff-self` و`requestSubscription`
+ * و`createRequestFor` — أي أنه نمط مستقرّ لا استثناء.
+ *
+ * ── والمفعَّلة وحدها ────────────────────────────────────────────────
+ * ⚠️ الموقوفة يرفضها `createRequestFor` بعد الإرسال. وعرضُها يدعو إلى
+ * اختيارها ثم يردّ الاختيار — وهذا نقيض سبب إيقافها.
+ */
+export interface RequestableCategory {
+  id: string;
+  name: string;
+  departmentName: string;
+}
+
+export async function requestableCategories(
+  db: Db = prisma,
+): Promise<RequestableCategory[]> {
+  const rows = await db.departmentTask.findMany({
+    where: { isActive: true, department: { isActive: true } },
+    select: { id: true, name: true, department: { select: { name: true } } },
+    orderBy: [{ department: { name: "asc" } }, { name: "asc" }],
+  });
+
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    departmentName: r.department.name,
+  }));
+}

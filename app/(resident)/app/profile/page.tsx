@@ -8,6 +8,8 @@ import { PageHeader } from "@/components/ui/page";
 import { ROLE_LABELS_AR, type UserRole } from "@/lib/auth/roles";
 import { formatPhoneForDisplay } from "@/lib/domain/phone";
 import { formatBaghdadDate, formatBaghdadDateTime } from "@/lib/dates";
+import { RESIDENT_REQUEST_STATUS_AR } from "@/lib/labels";
+import { RequestProfileChangeForm } from "./request-change-form";
 
 /**
  * ملف الساكن.
@@ -33,6 +35,8 @@ export default async function MyProfilePage() {
   }
 
   const u = result.data;
+  /* آخر طلب تعديل — واحدٌ لا قائمة، راجع تعليق `getMyProfile` */
+  const last = u?.residentRequests[0] ?? null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -106,10 +110,45 @@ export default async function MyProfilePage() {
         ) : null}
       </CardContent></Card>
 
+      {/*
+        ⚠️ **حالة آخر طلب قبل زرّ طلبٍ جديد.** من أرسل وينتظر يبحث عن جواب
+        «أين طلبي؟» لا عن نموذجٍ ثانٍ — وعرضُ النموذج وحده يجعله يعيد
+        الإرسال، والخادم يردّه برسالةٍ يقرؤها رفضاً.
+      */}
+      {last ? (
+        <div
+          className={
+            last.status === "PENDING"
+              ? "rounded-xl border border-warning-200 bg-warning-25 p-4 text-theme-sm dark:border-warning-500/30 dark:bg-warning-500/5"
+              : "rounded-xl border bg-muted/40 p-4 text-theme-sm"
+          }
+        >
+          <span className="font-medium">
+            طلب التعديل: {RESIDENT_REQUEST_STATUS_AR[last.status]}
+          </span>
+          <span className="block text-theme-xs text-muted-foreground">
+            أُرسل <Ltr>{formatBaghdadDate(last.createdAt)}</Ltr>
+            {last.reviewNote ? ` — ${last.reviewNote}` : ""}
+          </span>
+        </div>
+      ) : null}
+
       <p className="rounded-xl bg-muted p-3 text-sm text-muted-foreground">
-        لتغيير أي من هذه البيانات راجع إدارة المجمّع. التعديل المباشر غير متاح
-        عمداً: تغيير رقم الهاتف يغيّر الوجهة التي يصلها رمز دخولك.
+        التعديل المباشر غير متاح عمداً: تغيير رقم الهاتف يغيّر الوجهة التي يصلها
+        رمز دخولك. اطلبه من هنا، وتراجعه الإدارة.
       </p>
+
+      {/*
+        ⚠️ لا زرّ ما دام طلبٌ معلّقاً: الخادم يمنع الثاني، وزرٌّ يفتح نموذجاً
+        يُردّ عند الإرسال يُقرأ عطلاً لا قاعدة.
+      */}
+      {last?.status === "PENDING" ? null : (
+        <RequestProfileChangeForm
+          currentName={u.fullName}
+          currentPhone={u.phone}
+          currentEmergencyPhone={u.residentProfile?.emergencyPhone ?? null}
+        />
+      )}
     </div>
   );
 }

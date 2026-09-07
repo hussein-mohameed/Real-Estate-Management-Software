@@ -93,6 +93,39 @@ async function createPending(
     );
   }
 
+  /**
+   * ── 🔴 ولا اشتراك ثانٍ على نفس (الموضوع + الخدمة) ──────────────────
+   * لم يكن هنا حرسٌ، ولا في القاعدة فهرسٌ فريد. فكان الساكن يطلب خدمةً
+   * يشترك بها سلفاً — أو يضغط الزرّ مرّتين — فيصير صفّان، ويوافق الأدمن
+   * عليهما، **فيُقيَّد المبلغ مرّتين كل دورة** (‏B2 يُقسّط الأولى بالتناسب
+   * فيبدو الفرق مبرَّراً ولا يُلاحَظ).
+   *
+   * ⚠️ و`PAUSED` يُحتسب قائماً — نفس منطق `mandatory-subscriptions.ts`:
+   * هو اشتراك ينتظر استئنافاً بقرار الأدمن (‏§7.3)، لا فراغاً يُملأ بثانٍ.
+   *
+   * والحرس هنا لا في الواجهة: `createSubscription` نقطة نهاية أيضاً،
+   * والأدمن يُخطئ كما يُخطئ الساكن.
+   */
+  const duplicate = await prisma.subscription.findFirst({
+    where: {
+      serviceId: service.id,
+      status: { in: ["ACTIVE", "PAUSED", "PENDING_APPROVAL"] },
+      deletedAt: null,
+      ...(input.subjectType === "RESIDENT"
+        ? { residentUserId: input.residentUserId! }
+        : { apartmentId: input.apartmentId, subjectType: "APARTMENT" as const }),
+    },
+    select: { status: true },
+  });
+
+  if (duplicate) {
+    throw new BusinessRuleError(
+      duplicate.status === "PENDING_APPROVAL"
+        ? "على هذه الخدمة طلبٌ معلّق ينتظر موافقة الإدارة."
+        : "أنت مشترك بهذه الخدمة سلفاً.",
+    );
+  }
+
   return prisma.subscription.create({
     data: {
       serviceId: service.id,
@@ -181,6 +214,202 @@ export async function requestSubscription(
 
   return { id: created.id };
 }
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════
+ *  طلب الساكن إلغاء اشتراكه — §3.2 «unsubscribe» · §8.4.
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * ── ⚠️ **طلبٌ لا إلغاء** ────────────────────────────────────────────
+ * الاشتراك يبقى `ACTIVE` **ويُفوتَر** حتى يقرّر الأدمن. وجعلُ الطلب يُلغي
+ * مباشرةً كان سيعطي الساكن قدرةً تمنعها المصفوفة (`OWN` = قراءة)، ويُسقط
+ * خدمةً قد تكون مرتبطة بالتزام — بضغطة.
+ *
+ * ── ولا يُطلَب إلغاء خدمة إلزامية ───────────────────────────────────
+ * 🔴 الإلزامية تُضاف بالإشغال (`mandatory-subscriptions.ts`) وتُعاد إن
+ * أُلغيت. فطلبُ إلغائها يفتح دورةً عبثية: يوافق الأدمن، ثم يعيدها النظام،
+ * فيطلب الساكن ثانيةً — ولا أحد يفهم لماذا.
+ *
+ * ── والنطاق بنيويّ ─────────────────────────────────────────────────
+ * الشقة تُطابَق على `residentApartmentIds` من الجلسة — نفس `requestSubscription`.
+ */
+export async function requestSubscriptionCancellation(
+  input: { subscriptionId: string; reason?: string | undefined },
+  requesterUserId: string,
+  meta: { ip?: string | null; userAgent?: string | null } = {},
+): Promise<{ id: string }> {
+  const sub = await prisma.subscription.findFirst({
+    where: { id: input.subscriptionId, deletedAt: null },
+    select: {
+      id: true,
+      status: true,
+      apartmentId: true,
+      cancellationRequestedAt: true,
+      service: { select: { name: true, isMandatory: true } },
+    },
+  });
+  if (!sub) throw new NotFoundError("الاشتراك");
+
+  if (!sub.apartmentId) throw new BusinessRuleError("اشتراك بلا شقة لا يُطلَب إلغاؤه.");
+
+  const mine = await residentApartmentIds(requesterUserId);
+  if (!mine.includes(sub.apartmentId)) {
+    throw new BusinessRuleError("لا يمكنك الطلب على شقة غير مرتبطة بحسابك.");
+  }
+
+  if (sub.service.isMandatory) {
+    throw new BusinessRuleError(
+      `«${sub.service.name}» خدمة إلزامية تأتي مع السكن ولا تُلغى بالطلب.`,
+    );
+  }
+
+  /*
+   * ⚠️ `PENDING_APPROVAL` مستثنى: طلبٌ لم يُوافَق عليه بعد لا يُلغى —
+   * يُرفَض من الإدارة أو يُسحب. وقبولُ طلب إلغاءٍ عليه يُنتج صفّاً عليه
+   * طلبان متناقضان.
+   */
+  if (sub.status !== "ACTIVE" && sub.status !== "PAUSED") {
+    throw new BusinessRuleError(
+      sub.status === "CANCELLED"
+        ? "الاشتراك ملغى أصلاً."
+        : "الاشتراك لم يُفعَّل بعد — راجع الإدارة بشأن طلبك المعلّق.",
+    );
+  }
+
+  if (sub.cancellationRequestedAt) {
+    throw new BusinessRuleError("طلب الإلغاء مُرسَل سلفاً وينتظر قرار الإدارة.");
+  }
+
+  await prisma.subscription.update({
+    where: { id: sub.id },
+    data: {
+      cancellationRequestedAt: now(),
+      cancellationRequestedByUserId: requesterUserId,
+      cancellationReason: input.reason ?? null,
+    },
+  });
+
+  await writeAudit({
+    actorUserId: requesterUserId,
+    action: "subscription.cancellation_request",
+    entityType: "Subscription",
+    entityId: sub.id,
+    after: { cancellationReason: input.reason ?? null },
+    ip: meta.ip ?? null,
+    userAgent: meta.userAgent ?? null,
+  });
+
+  return { id: sub.id };
+}
+
+/**
+ * يمحو طلب الإلغاء — **الأعمدة الثلاثة معاً**.
+ *
+ * ⚠️ مستخرَجة لأن لها مسارين: سحبُ الساكن وردُّ الإدارة. ونسخُها في
+ * الاثنين كان سيسمح لأحدهما أن ينسى عموداً عند أول تعديل — فيبقى سببٌ
+ * بلا تاريخ، نصٌّ معلّق في الصفّ لا يعرف قارئُه متى قيل ولا هل هو قائم.
+ */
+async function clearCancellationRequest(subscriptionId: string): Promise<void> {
+  await prisma.subscription.update({
+    where: { id: subscriptionId },
+    data: {
+      cancellationRequestedAt: null,
+      cancellationRequestedByUserId: null,
+      cancellationReason: null,
+    },
+  });
+}
+
+/**
+ * سحب الساكن طلبَه.
+ *
+ * ── ⚠️ **صاحبُ الطلب وحده يسحبه** ──────────────────────────────────
+ * لا كلُّ ساكن في الشقة. طلبُ الإلغاء قرارٌ ماليّ على حسابٍ يدفعه صاحب
+ * العقد، وجعلُ أي فرد يبطله يفتح تنازعاً صامتاً: يطلب أحدهم ويسحب الآخر
+ * بلا أن يعلم أوّلهما.
+ *
+ * ومن أراد إبطال طلب غيره فطريقه الإدارة — `dismissCancellationRequest`
+ * موجودٌ لذلك، ويُدقَّق باسم الأدمن لا باسم من تسلّل إليه.
+ */
+export async function withdrawSubscriptionCancellation(
+  input: { subscriptionId: string },
+  requesterUserId: string,
+  meta: { ip?: string | null; userAgent?: string | null } = {},
+): Promise<{ id: string }> {
+  const sub = await prisma.subscription.findFirst({
+    where: { id: input.subscriptionId, deletedAt: null },
+    select: {
+      id: true,
+      apartmentId: true,
+      cancellationRequestedAt: true,
+      cancellationRequestedByUserId: true,
+    },
+  });
+  if (!sub) throw new NotFoundError("الاشتراك");
+
+  if (!sub.cancellationRequestedAt) {
+    throw new BusinessRuleError("لا طلب إلغاء على هذا الاشتراك.");
+  }
+
+  /* ⚠️ النطاق أوّلاً — قبل أن يُكشف شيء عن صفٍّ ليس له */
+  const mine = sub.apartmentId ? await residentApartmentIds(requesterUserId) : [];
+  if (!sub.apartmentId || !mine.includes(sub.apartmentId)) {
+    throw new BusinessRuleError("لا يمكنك الطلب على شقة غير مرتبطة بحسابك.");
+  }
+
+  if (sub.cancellationRequestedByUserId !== requesterUserId) {
+    throw new BusinessRuleError(
+      "طلب الإلغاء أرسله ساكن آخر في وحدتك — راجع الإدارة لإبطاله.",
+    );
+  }
+
+  await clearCancellationRequest(sub.id);
+
+  await writeAudit({
+    actorUserId: requesterUserId,
+    action: "subscription.cancellation_withdraw",
+    entityType: "Subscription",
+    entityId: sub.id,
+    before: { cancellationRequestedAt: sub.cancellationRequestedAt },
+    ip: meta.ip ?? null,
+    userAgent: meta.userAgent ?? null,
+  });
+
+  return { id: sub.id };
+}
+
+/**
+ * ردّ طلب الإلغاء — الإدارة ترفض ولا تُلغي.
+ *
+ * ⚠️ **بدونه يبقى العلم مرفوعاً إلى الأبد.** الأدمن الذي يقرّر الإبقاء
+ * على الاشتراك لا يملك إلا الإلغاء أو التجاهل، فتتراكم الأعلام وتصير
+ * شاشة «إلغاء مطلوب» بلا معنى. الردّ يُغلق الحلقة.
+ */
+export const dismissCancellationRequest = defineAction({
+  name: "dismissCancellationRequest",
+  capability: "SUBSCRIPTIONS",
+  kind: "write",
+  schema: z.object({
+    subscriptionId: z.string().min(1),
+    reason: z.string().trim().max(500).optional(),
+  }),
+  auditAction: "subscription.cancellation_dismiss",
+  auditEntityType: "Subscription",
+  handler: async ({ input }) => {
+    const sub = await prisma.subscription.findFirst({
+      where: { id: input.subscriptionId, deletedAt: null },
+      select: { id: true, cancellationRequestedAt: true },
+    });
+    if (!sub) throw new NotFoundError("الاشتراك");
+    if (!sub.cancellationRequestedAt) {
+      throw new BusinessRuleError("لا طلب إلغاء على هذا الاشتراك.");
+    }
+
+    await clearCancellationRequest(sub.id);
+
+    return { id: sub.id, dismissed: true, reason: input.reason ?? null };
+  },
+});
 
 // ═══════════════════════════════════════════════════════════════════════
 //  الموافقة — هنا يُقيَّد المال أول مرّة
@@ -664,6 +893,8 @@ const listSchema = z.object({
   serviceId: z.string().optional(),
   /** بحث على اسم الخدمة أو رقم الشقة — ما يعرفه الأدمن عن ظهر قلب. */
   search: z.string().trim().max(60).optional(),
+  /** «إلغاء مطلوب» وحدها — طلبٌ لا يغيّر الحالة فلا يجده مرشّح الحالة. */
+  cancellationRequested: z.boolean().optional(),
   page: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(100).default(25),
 });
@@ -689,6 +920,8 @@ export const listSubscriptions = defineAction({
       ...(input.status ? { status: input.status } : {}),
       ...(input.apartmentId ? { apartmentId: input.apartmentId } : {}),
       ...(input.serviceId ? { serviceId: input.serviceId } : {}),
+      /* ⚠️ مرشّح «إلغاء مطلوب»: قلّة بين مئات الصفوف، وبلا مرشّح تُبحَث بالعين */
+      ...(input.cancellationRequested ? { cancellationRequestedAt: { not: null } } : {}),
       ...(input.search
         ? {
             OR: [
@@ -703,7 +936,7 @@ export const listSubscriptions = defineAction({
         : {}),
     };
 
-    const [rows, total, pendingCount] = await Promise.all([
+    const [rows, total, pendingCount, cancellationCount] = await Promise.all([
       prisma.subscription.findMany({
         where,
         select: {
@@ -716,6 +949,9 @@ export const listSubscriptions = defineAction({
           payerType: true,
           startDate: true,
           nextChargeDate: true,
+          cancellationRequestedAt: true,
+          cancellationReason: true,
+          cancellationRequestedBy: { select: { id: true, fullName: true } },
           service: { select: { id: true, name: true, pricingModel: true, isMandatory: true } },
           apartment: { select: { id: true, displayNumber: true, occupancyStatus: true } },
           residentUser: { select: { id: true, fullName: true } },
@@ -734,8 +970,23 @@ export const listSubscriptions = defineAction({
       prisma.subscription.count({
         where: { deletedAt: null, status: "PENDING_APPROVAL" },
       }),
+      /*
+       * ⚠️ عدّادٌ ثانٍ مستقلّ: طلب الإلغاء **لا يغيّر الحالة** (الاشتراك
+       * يبقى `ACTIVE` ويُفوتَر)، فلا يظهر في عدّاد المعلّق. وبلا عدّاد له
+       * يبقى الطلب في صفٍّ لا ينظر إليه أحد حتى يشتكي صاحبه.
+       */
+      prisma.subscription.count({
+        where: { deletedAt: null, cancellationRequestedAt: { not: null } },
+      }),
     ]);
 
-    return { rows, total, page: input.page, pageSize: input.pageSize, pendingCount };
+    return {
+      rows,
+      total,
+      page: input.page,
+      pageSize: input.pageSize,
+      pendingCount,
+      cancellationCount,
+    };
   },
 });

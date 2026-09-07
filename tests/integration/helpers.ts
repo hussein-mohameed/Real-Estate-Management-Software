@@ -205,8 +205,30 @@ export async function cleanupTestData(client: Client): Promise<void> {
         `"apartmentId" LIKE $1 OR "residentUserId" LIKE $1
            OR "accountId" LIKE $1 OR "accountId" IN ${TEST_ACCOUNTS}`,
       ],
-      ["Badge", `"vehicleId" LIKE $1`],
-      ["Vehicle", `"apartmentId" LIKE $1`],
+      /**
+       * ── 🔴 الباج لا يحمل بادئة الاختبار ولا مركبتُه ───────────────────
+       * `registerVehicleFor` و`addVehicle` يولّدان `cuid()`، فالمُحدِّد
+       * `"vehicleId" LIKE $1` كان **لا يُطابق شيئاً** من مركبات الإجراءات.
+       * فيبقى الباج ويمنع حذف المركبة بـ`Badge_vehicleId_fkey`، ويسقط
+       * التنظيف كلّه — لا اختبار المركبات وحده.
+       *
+       * ⚠️ وهذا رابع موضع بنفس السبب بعد الحسابات والبنايات والعقود:
+       * **المُحدِّد يجب أن يصل إلى الأب لا أن يفترض بادئةً في الابن.**
+       */
+      [
+        "Badge",
+        `"vehicleId" LIKE $1
+           OR "vehicleId" IN (
+             SELECT id FROM "Vehicle"
+              WHERE "apartmentId" LIKE $1 OR "ownerUserId" LIKE $1
+                 OR "apartmentId" IN ${TEST_APARTMENTS})
+           OR "issuedByUserId" LIKE $1`,
+      ],
+      [
+        "Vehicle",
+        `"apartmentId" LIKE $1 OR "ownerUserId" LIKE $1
+           OR "apartmentId" IN ${TEST_APARTMENTS}`,
+      ],
       ["RequestComment", `"requestId" LIKE $1 OR "authorUserId" LIKE $1`],
       ["ServiceRequest", `"apartmentId" LIKE $1 OR "createdByUserId" LIKE $1`],
       ["ResidentRequest", `"createdByUserId" LIKE $1`],

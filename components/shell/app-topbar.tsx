@@ -3,7 +3,6 @@
 import { usePathname } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { Separator } from "@/components/ui/separator";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { GlobalSearch } from "./global-search";
 import { NotificationsBell } from "./notifications-bell";
@@ -83,11 +82,18 @@ export function AppTopbar({
   return (
     /*
      * لاصق: الجداول تُمرَّر كثيراً، وفقدان العنوان يُفقد السياق.
-     * والشفافية مع `backdrop-blur` تُبقي إحساس الطبقة بدل خطٍّ صلب.
+     *
+     * ── ⚠️ ولا خطّ تحته ولا بينه وبين أدواته ──────────────────────────
+     * كان `border-b` يرسم خطّاً عبر العرض كلّه، وفاصلٌ رأسيّ ثانٍ بعد زرّ
+     * الطيّ. وثلاثة خطوط في أعلى كل شاشة — العلويّ، والرأسيّ، وحدّ الشريط
+     * الجانبي — تقطّع القشرة إلى شرائح قبل أن يبدأ المحتوى.
+     *
+     * والطبقة تُقرأ **بالضبابية والشفافية** لا بالخطّ: المحتوى يمرّ تحت
+     * `backdrop-blur` فيُرى أنه خلفها، وهذا أدقّ من خطٍّ صلب لأنه يقول
+     * «طبقة» لا «حدّ». والفراغ يفصل الزرّ عن المسار بما يكفي.
      */
-    <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center gap-2 border-b bg-canvas/80 px-3 backdrop-blur-md md:px-6">
+    <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center gap-3 bg-canvas/80 px-3 backdrop-blur-md md:px-6">
       <SidebarTrigger className="-ms-1 size-9 rounded-full" />
-      <Separator orientation="vertical" className="mx-1 h-5" />
 
       {/* مسار التنقّل — القسم يُخفى على الهاتف حيث لا مساحة للسلسلة */}
       <nav aria-label="مسار التنقّل" className="min-w-0 flex-1">
@@ -125,7 +131,6 @@ export function AppTopbar({
         {showSearch ? <GlobalSearch /> : null}
         <NotificationsBell rows={notifications} unread={unreadCount} />
         <ThemeToggle />
-        <Separator orientation="vertical" className="mx-1 hidden h-6 sm:block" />
         <UserMenu
           userName={userName}
           email={email}

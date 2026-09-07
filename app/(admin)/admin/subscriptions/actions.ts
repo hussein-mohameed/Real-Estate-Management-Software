@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import {
   approveSubscription,
   cancelSubscription,
+  createSubscription,
+  dismissCancellationRequest,
   rejectSubscription,
   updateSubscriptionQuantity,
 } from "@/lib/actions/subscriptions";
@@ -64,6 +66,54 @@ export async function setQuantityAction(
   const me = await requireRole("ADMIN");
   const r = await updateSubscriptionQuantity(
     { subscriptionId, quantity },
+    { userId: me.id, role: me.role },
+  );
+  if (r.ok) revalidatePath(PATH);
+  return r;
+}
+
+/**
+ * ردّ طلب الإلغاء — الإبقاء على الاشتراك.
+ *
+ * ⚠️ **ليس إلغاءً للاشتراك بل للطلب.** بدونه لا يملك الأدمن الذي يقرّر
+ * الإبقاء إلا التجاهل، فيبقى العلم مرفوعاً ويتراكم حتى تصير شارة «إلغاء
+ * مطلوب» ضجيجاً لا إشارة.
+ */
+export async function dismissCancellationAction(
+  subscriptionId: string,
+  reason: string,
+): Promise<ActionResult<unknown>> {
+  const me = await requireRole("ADMIN");
+  const r = await dismissCancellationRequest(
+    { subscriptionId, ...(reason.trim() ? { reason: reason.trim() } : {}) },
+    { userId: me.id, role: me.role },
+  );
+  if (r.ok) revalidatePath(PATH);
+  return r;
+}
+
+/**
+ * إنشاء اشتراك — الإدارة مباشرةً.
+ *
+ * ⚠️ `subjectType: "APARTMENT"` ثابتٌ هنا: الاشتراك على **ساكن** يلزمه
+ * `residentUserId` واختيارُ الساكن شاشةٌ أخرى. وقبولُه بلا واجهةٍ تختاره
+ * كان سيمرّر `undefined` فيُردّ في الخادم برسالةٍ لا تشرح ما ينقص.
+ */
+export async function createSubscriptionAction(input: {
+  serviceId: string;
+  apartmentId: string;
+  quantity: number;
+  notes: string;
+}): Promise<ActionResult<unknown>> {
+  const me = await requireRole("ADMIN");
+  const r = await createSubscription(
+    {
+      serviceId: input.serviceId,
+      subjectType: "APARTMENT",
+      apartmentId: input.apartmentId,
+      quantity: input.quantity,
+      ...(input.notes.trim() ? { notes: input.notes.trim() } : {}),
+    },
     { userId: me.id, role: me.role },
   );
   if (r.ok) revalidatePath(PATH);

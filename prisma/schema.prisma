@@ -329,29 +329,30 @@ model User {
   createdBy    User?  @relation("UserCreatedBy", fields: [createdByUserId], references: [id])
   createdUsers User[] @relation("UserCreatedBy")
 
-  residentProfile        ResidentProfile?
-  staffProfile           StaffProfile?
-  apartmentLinks         ApartmentResident[]
-  heldContracts          Contract[]          @relation("ContractHolder")
-  ownedAccounts          Account[]           @relation("AccountHolder")
-  ownedVehicles          Vehicle[]           @relation("VehicleOwner")
-  managedDepartments     Department[]        @relation("DepartmentManager")
-  createdRequests        ServiceRequest[]    @relation("RequestCreator")
-  requestComments        RequestComment[]
-  residentRequests       ResidentRequest[]   @relation("ResidentRequestCreator")
-  reviewedRequests       ResidentRequest[]   @relation("ResidentRequestReviewer")
-  subscriptionsRequested Subscription[]      @relation("SubscriptionRequestedBy")
-  subscriptionsApproved  Subscription[]      @relation("SubscriptionApprovedBy")
-  residentSubscriptions  Subscription[]      @relation("SubscriptionResident")
-  ledgerEntries          LedgerEntry[]       @relation("LedgerCreatedBy")
-  receivedPayments       Payment[]           @relation("PaymentReceivedBy")
-  cashDrawerSessions     CashDrawerSession[] @relation("CashDrawerStaff")
-  closedCashDrawers      CashDrawerSession[] @relation("CashDrawerClosedBy")
-  issuedBadges           Badge[]             @relation("BadgeIssuedBy")
-  uploadedAttachments    Attachment[]
-  notifications          Notification[]
-  auditEntries           AuditLog[]
-  loginLinks             LoginLink[]
+  residentProfile                    ResidentProfile?
+  staffProfile                       StaffProfile?
+  apartmentLinks                     ApartmentResident[]
+  heldContracts                      Contract[]          @relation("ContractHolder")
+  ownedAccounts                      Account[]           @relation("AccountHolder")
+  ownedVehicles                      Vehicle[]           @relation("VehicleOwner")
+  managedDepartments                 Department[]        @relation("DepartmentManager")
+  createdRequests                    ServiceRequest[]    @relation("RequestCreator")
+  requestComments                    RequestComment[]
+  residentRequests                   ResidentRequest[]   @relation("ResidentRequestCreator")
+  reviewedRequests                   ResidentRequest[]   @relation("ResidentRequestReviewer")
+  subscriptionsRequested             Subscription[]      @relation("SubscriptionRequestedBy")
+  subscriptionsApproved              Subscription[]      @relation("SubscriptionApprovedBy")
+  subscriptionsCancellationRequested Subscription[]      @relation("SubscriptionCancellationRequestedBy")
+  residentSubscriptions              Subscription[]      @relation("SubscriptionResident")
+  ledgerEntries                      LedgerEntry[]       @relation("LedgerCreatedBy")
+  receivedPayments                   Payment[]           @relation("PaymentReceivedBy")
+  cashDrawerSessions                 CashDrawerSession[] @relation("CashDrawerStaff")
+  closedCashDrawers                  CashDrawerSession[] @relation("CashDrawerClosedBy")
+  issuedBadges                       Badge[]             @relation("BadgeIssuedBy")
+  uploadedAttachments                Attachment[]
+  notifications                      Notification[]
+  auditEntries                       AuditLog[]
+  loginLinks                         LoginLink[]
 
   @@index([role, isActive])
 }
@@ -732,44 +733,53 @@ model Service {
 }
 
 model Subscription {
-  id                     String                  @id @default(cuid())
-  serviceId              String
-  subjectType            SubscriptionSubjectType
-  apartmentId            String?
-  residentUserId         String?
+  id                            String                  @id @default(cuid())
+  serviceId                     String
+  subjectType                   SubscriptionSubjectType
+  apartmentId                   String?
+  residentUserId                String?
   // Q26/2.4: **قابل لـnull حتى الموافقة**. المخطّط الأصلي يجعله إلزامياً،
   // فساكن في وحدة مؤجّرة من الشركة (بلا عقد بيع) لا يستطيع حتى **طلب**
   // خدمة payerType = OWNER — يفشل عند الإنشاء لا عند الموافقة.
-  accountId              String?
-  payerType              PayerType
-  quantity               Int                     @default(1)
+  accountId                     String?
+  payerType                     PayerType
+  quantity                      Int                     @default(1)
   // R23: لقطة السعر — تغيير سعر الخدمة لا يرتدّ على الاشتراكات القائمة.
-  unitPriceSnapshotIqd   BigInt
+  unitPriceSnapshotIqd          BigInt
   // Q5 ⚠️ يُعاد حسابه عند **كل تغيّر في أفراد الأسرة** لا عند الفوترة فقط —
   // وإلا صار قيمة قديمة بين دورتين، وهو ما يقرأه مؤشّر «الإيراد الدوري
   // المتوقّع» فيكسر إصلاح Q45.
-  periodAmountIqd        BigInt
-  billingCycle           BillingCycle?
-  status                 SubscriptionStatus      @default(PENDING_APPROVAL)
-  startDate              DateTime
-  endDate                DateTime?
-  nextChargeDate         DateTime?
-  lastChargedPeriodStart DateTime?
-  customFieldValues      Json?
-  requestedByUserId      String?
-  approvedByUserId       String?
-  notes                  String?
-  createdAt              DateTime                @default(now())
-  updatedAt              DateTime                @updatedAt
-  deletedAt              DateTime?
+  periodAmountIqd               BigInt
+  billingCycle                  BillingCycle?
+  status                        SubscriptionStatus      @default(PENDING_APPROVAL)
+  startDate                     DateTime
+  endDate                       DateTime?
+  nextChargeDate                DateTime?
+  lastChargedPeriodStart        DateTime?
+  customFieldValues             Json?
+  requestedByUserId             String?
+  approvedByUserId              String?
+  // §3.2 «request subscribe/**unsubscribe**» و§8.4 «request cancellation».
+  // ⚠️ **طلبٌ على الصفّ لا حالة له.** جُرِّبت الحالة أولاً (`CANCELLATION_
+  // REQUESTED`) فكسرت كل استعلام يسأل «هل هو نشط؟»: الاشتراك يبقى **نشطاً
+  // ويُفوتَر** حتى يوافق الأدمن، وحالةٌ ثالثة كانت ستُخرجه من الفوترة
+  // بمجرّد الطلب — أي إلغاءٌ فعليّ بلا قرار.
+  cancellationRequestedAt       DateTime?
+  cancellationRequestedByUserId String?
+  cancellationReason            String?
+  notes                         String?
+  createdAt                     DateTime                @default(now())
+  updatedAt                     DateTime                @updatedAt
+  deletedAt                     DateTime?
 
-  service       Service       @relation(fields: [serviceId], references: [id])
-  apartment     Apartment?    @relation(fields: [apartmentId], references: [id])
-  residentUser  User?         @relation("SubscriptionResident", fields: [residentUserId], references: [id])
-  account       Account?      @relation(fields: [accountId], references: [id])
-  requestedBy   User?         @relation("SubscriptionRequestedBy", fields: [requestedByUserId], references: [id])
-  approvedBy    User?         @relation("SubscriptionApprovedBy", fields: [approvedByUserId], references: [id])
-  ledgerEntries LedgerEntry[]
+  service                 Service       @relation(fields: [serviceId], references: [id])
+  apartment               Apartment?    @relation(fields: [apartmentId], references: [id])
+  residentUser            User?         @relation("SubscriptionResident", fields: [residentUserId], references: [id])
+  account                 Account?      @relation(fields: [accountId], references: [id])
+  requestedBy             User?         @relation("SubscriptionRequestedBy", fields: [requestedByUserId], references: [id])
+  cancellationRequestedBy User?         @relation("SubscriptionCancellationRequestedBy", fields: [cancellationRequestedByUserId], references: [id])
+  approvedBy              User?         @relation("SubscriptionApprovedBy", fields: [approvedByUserId], references: [id])
+  ledgerEntries           LedgerEntry[]
 
   @@index([serviceId, status])
   @@index([apartmentId, status])
@@ -777,6 +787,9 @@ model Subscription {
   @@index([residentUserId])
   @@index([status, nextChargeDate])
   @@index([deletedAt])
+  // ⚠️ فهرس جزئيّ: شاشة الإدارة تسأل «أيّها طُلب إلغاؤه؟» وهي قلّة بين
+  // مئات الصفوف. وفهرسٌ كامل على عمودٍ أغلبه `NULL` يكلّف ولا يفيد.
+  @@index([cancellationRequestedAt])
 }
 
 // ═══════════════════════════════════════════════════════════════════════

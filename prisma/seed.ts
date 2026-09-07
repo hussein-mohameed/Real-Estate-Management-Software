@@ -29,6 +29,8 @@ import {
 } from "@/lib/actions/subscriptions";
 import { addRequestComment, setRequestStatus } from "@/lib/actions/requests";
 import { createRequestFor } from "@/lib/services/resident-requests";
+import { registerVehicleFor } from "@/lib/services/resident-vehicles";
+import { approveVehicle, rejectVehicle } from "@/lib/actions/vehicles";
 import { runInstallmentCharges } from "@/lib/services/installment-charges";
 import {
   closeCashDrawer,
@@ -909,9 +911,14 @@ async function seedResidentPortal(
       }
 
       /* ── المركبات والباجات ───────────────────────────────────────── */
-      /*
-       * ⚠️ كتابة مباشرة لا عبر إجراء — إجراءات المركبات لم تُبنَ (الخطوة
-       * 4.1) وإصدار الباج محجوب بـ`B3`. والسبب يُقال لا يُخفى.
+      /**
+       * ✅ **عبر الإجراءات الآن** — بُنيت الخطوة 4.1. والفرق ليس أسلوبياً:
+       * المسار الحقيقي هو «يسجّل الساكن ← تقرّر الإدارة»، فبذرٌ يكتب
+       * `APPROVED` مباشرةً لا يمرّ بالفهرس `uniq_active_plate` ولا بحرس
+       * النطاق — فتبقى ثغرةٌ فيهما غير مكتشَفة حتى يصل مستخدم حقيقي.
+       *
+       * ⚠️ ويبقى **الباج** كتابةً مباشرة: إصداره محجوب بـ`B3` (على حساب
+       * مَن يُقيَّد الرسم؟)، ولا إجراء له يُمرّ منه. والسبب يُقال لا يُخفى.
        *
        * وأربع حالات مقصودة: باجٌ ساري · باجٌ **منتهٍ وحالتُه `ISSUED`**
        * (هذا ما يكشفه `effectiveStatus` في الشاشة) · مركبة معلَّقة بلا باج
@@ -920,21 +927,31 @@ async function seedResidentPortal(
       const PLATE_PROVINCES = ["بغداد", "البصرة", "أربيل", "النجف"];
       const VEHICLE_MAKES = ["تويوتا", "كيا", "هيونداي", "نيسان"];
       for (let v = 0; v < profile.vehicles; v += 1) {
-        const status = v === 2 ? "PENDING_APPROVAL" : v === 3 ? "REJECTED" : "APPROVED";
-        const vehicle = await prisma.vehicle.create({
-          data: {
-            apartmentId: apartment.id,
-            ownerUserId: user.id,
-            plateNumber: `${between(10, 99)} ${String(between(10000, 99999))}`,
-            plateProvince: pick(PLATE_PROVINCES),
-            make: pick(VEHICLE_MAKES),
-            color: pick(["أبيض", "أسود", "فضّي", "رمادي"]),
-            status,
-          },
-          select: { id: true },
+        const outcome = v === 2 ? "PENDING" : v === 3 ? "REJECTED" : "APPROVED";
+
+        /* ⚠️ يسجّله **الساكن** لا الأدمن: `ownerUserId` عليه تقوم بوّابته */
+        const vehicle = await registerVehicleFor(user.id, {
+          apartmentId: apartment.id,
+          plateNumber: `${between(10, 99)} ${String(between(10000, 99999))}`,
+          plateProvince: pick(PLATE_PROVINCES),
+          make: pick(VEHICLE_MAKES),
+          color: pick(["أبيض", "أسود", "فضّي", "رمادي"]),
         });
 
-        if (status !== "APPROVED") continue;
+        if (outcome === "REJECTED") {
+          must(
+            await rejectVehicle(
+              { vehicleId: vehicle.id, reason: "اللوحة لا تطابق هوية المركبة." },
+              actor,
+            ),
+            "رفض مركبة",
+          );
+          continue;
+        }
+        if (outcome === "PENDING") continue;
+
+        must(await approveVehicle({ vehicleId: vehicle.id }, actor), "اعتماد مركبة");
+
         const expired = v === 1;
         await prisma.badge.create({
           data: {
@@ -1500,10 +1517,13 @@ async function main(): Promise<void> {
 
   // ── المركبات والباجات — لبوّابة الساكن ────────────────────────────
   /**
-   * ⚠️ **كتابة مباشرة لا عبر إجراء** — والسبب يُقال لا يُخفى:
-   * إجراءات المركبات لم تُبنَ بعد (الخطوة 4.1)، وإصدار الباج محجوب بقرار
-   * `B3` (على حساب مَن يُقيَّد الرسم؟). فالخيار بين بذرٍ مباشر مُعلَّم،
-   * وشاشةٍ فارغة لا تُختبَر.
+   * ✅ **المركبة عبر إجراءاتها** — بُنيت الخطوة 4.1. تُسجَّل باسم ساكنها
+   * ثم تُعتمَد أو تُرفض، فتمرّ ببذرٍ حقيقي بالفهرس `uniq_active_plate`
+   * وبحرس النطاق.
+   *
+   * ⚠️ و**الباج يبقى كتابةً مباشرة**: إصداره محجوب بـ`B3` (على حساب مَن
+   * يُقيَّد الرسم؟) ولا إجراء له. فالخيار بين بذرٍ مباشر مُعلَّم وشاشةٍ
+   * فارغة لا تُختبَر.
    *
    * ⚠️ و`feeIqd` يبقى فارغاً: تركُه فارغاً يقول «لم يُقرَّر» — وملؤه
    * برقمٍ مخترَع يُنتج بياناً يبدو مقرَّراً وليس كذلك.
@@ -1532,22 +1552,37 @@ async function main(): Promise<void> {
     const existing = await prisma.vehicle.count({ where: { apartmentId: apartment.id } });
     if (existing > 0) continue;
 
-    const vehicle = await prisma.vehicle.create({
-      data: {
-        apartmentId: apartment.id,
-        ownerUserId: apartment.residents[0]?.userId ?? null,
-        plateNumber: `${between(10, 99)} ${String(between(10000, 99999))}`,
-        plateProvince: pick(PROVINCES),
-        make: pick(MAKES),
-        color: pick(["أبيض", "أسود", "فضّي", "رمادي"]),
-        /* ⚠️ ثلاث حالات: المقبولة والمعلَّقة والمرفوضة — الشاشة تعرضها كلّها */
-        status: index % 7 === 6 ? "REJECTED" : index % 5 === 4 ? "PENDING_APPROVAL" : "APPROVED",
-      },
-      select: { id: true, status: true },
+    /*
+     * ⚠️ **يسجّلها ساكنها** لا الأدمن: `registerVehicleFor` يفرض أن تكون
+     * الشقة شقّته، فبذرٌ باسم غيره يفشل — وذلك صحيح، وهو ما يجعل البذر
+     * فحصاً للحرس لا التفافاً عليه.
+     */
+    const residentId = apartment.residents[0]?.userId;
+    if (!residentId) continue;
+
+    const vehicle = await registerVehicleFor(residentId, {
+      apartmentId: apartment.id,
+      plateNumber: `${between(10, 99)} ${String(between(10000, 99999))}`,
+      plateProvince: pick(PROVINCES),
+      make: pick(MAKES),
+      color: pick(["أبيض", "أسود", "فضّي", "رمادي"]),
     });
     vehicleCount += 1;
 
-    if (vehicle.status !== "APPROVED") continue;
+    /* ⚠️ ثلاث حالات: المعتمَدة والمعلَّقة والمرفوضة — الشاشة تعرضها كلّها */
+    if (index % 7 === 6) {
+      must(
+        await rejectVehicle(
+          { vehicleId: vehicle.id, reason: "بيانات المركبة غير مكتملة." },
+          actor,
+        ),
+        "رفض مركبة",
+      );
+      continue;
+    }
+    if (index % 5 === 4) continue;
+
+    must(await approveVehicle({ vehicleId: vehicle.id }, actor), "اعتماد مركبة");
 
     /*
      * ⚠️ **باجٌ منتهٍ عمداً** لكل رابع مركبة: حالته `ISSUED` وتاريخه مضى.

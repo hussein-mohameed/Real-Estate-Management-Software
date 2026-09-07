@@ -286,7 +286,30 @@ export const PERMISSION_MATRIX: Matrix = {
     OWNER: { level: "READ", specValue: "R", canExport: true },
     ADMIN: { level: "FULL", specValue: "F" },
     STAFF: { level: "WRITE", specValue: "W (assigned)", scope: "assigned" },
-    RESIDENT: { level: "OWN", specValue: "O (create + follow own)" },
+    /*
+     * ── ⚠️ `specValue` يقول «إنشاء» و`level` يمنح القراءة — والفرق مقصود.
+     *
+     * `LEVEL_ACTIONS.OWN` = قراءة فقط، ورفعُ الساكن إلى `WRITE` كان
+     * سيمنحه الكتابة على طلبات المجمَّع كلّه — لأن المستوى يسري على كل
+     * الصفوف ولا يعرف «صفّي أنا».
+     *
+     * فنصف «الإنشاء» مُنفَّذ **خارج المصفوفة** بنطاق بنيويّ:
+     * `lib/services/resident-requests.ts` يكتب باسم صاحب الجلسة وحده،
+     * ومعرِّفه من الجلسة لا من مُدخل المتصل، والشقة يجب أن تكون شقّته.
+     * مُختبَر في `tests/integration/requests.test.ts`.
+     *
+     * ⚠️ وكانت الخليّة بلا `correction` — فبدت متّسقة وهي ليست كذلك،
+     * وجردٌ آليّ للمصفوفة صنّف الطلبات «قراءة فقط للساكن». وعلى ذلك التصنيف
+     * نُزع نموذج الإنشاء من بوّابته جولةً كاملة.
+     */
+    RESIDENT: {
+      level: "OWN",
+      specValue: "O (create + follow own)",
+      correction:
+        "الإنشاء مُنفَّذ بنطاق بنيويّ خارج المصفوفة (‏lib/services/resident-requests.ts): " +
+        "المعرّف من الجلسة والشقة من ارتباطاته، لأن مستوى OWN يمنح القراءة وحدها " +
+        "ولا يعرف «صفّي أنا».",
+    },
   },
   FINANCIAL_REPORTS: {
     // التقارير ليست عملية — المالك كامل عليها بنصّ D3 «كامل على الإعدادات والتقارير».

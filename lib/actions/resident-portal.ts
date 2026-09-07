@@ -246,6 +246,23 @@ export const getMyProfile = defineAction({
             // nationalIdImageUrl / residenceCardImageUrl مستثنيان عمداً
           },
         },
+        /*
+         * ⚠️ **آخر طلب تعديل — واحدٌ لا قائمة.** الشاشة تجيب عن سؤالين
+         * فقط: «هل طلبي قيد النظر؟» و«ماذا قيل في الأخير؟». وقائمةُ
+         * تاريخٍ كامل تُحوّل صفحة الملفّ إلى سجلّ لا أحد يفتحها لأجله.
+         */
+        residentRequests: {
+          where: { kind: "PROFILE_CHANGE" },
+          select: {
+            id: true,
+            status: true,
+            reviewNote: true,
+            reviewedAt: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
       },
     });
   },
@@ -311,6 +328,18 @@ export const getMySubscriptions = defineAction({
         startDate: true,
         nextChargeDate: true,
         accountId: true,
+        /*
+         * ⚠️ التاريخ وحده — لا `cancellationReason` ولا من طلبه.
+         * السبب كتبه الساكن للإدارة، وعرضُه على شاشة يقرؤها أفراد البيت
+         * يُظهر ما قاله عنهم أحياناً. والشاشة تحتاج «هل طُلب؟» لا «لماذا».
+         */
+        cancellationRequestedAt: true,
+        /*
+         * ⚠️ يُقرأ ليُشتقّ منه `cancellationIsMine` **ولا يخرج**: الشاشة
+         * تحتاج «هل أسحبه؟» لا «من طلبه». وكشفُ الاسم يُخبر فرداً في البيت
+         * أن قريبه طلب إلغاء ما يدفعه غيرُه — خبرٌ ليس للشاشة أن تنقله.
+         */
+        cancellationRequestedByUserId: true,
         service: { select: { id: true, name: true, isMandatory: true } },
         apartment: { select: { id: true, displayNumber: true } },
       },
@@ -318,8 +347,15 @@ export const getMySubscriptions = defineAction({
     });
 
     return {
-      rows: rows.map(({ accountId, periodAmountIqd, ...r }) => ({
+      rows: rows.map(({ accountId, periodAmountIqd, cancellationRequestedByUserId, ...r }) => ({
         ...r,
+        /*
+         * ⚠️ منطقيّ لا معرّف: `cancellationRequestedByUserId` يُستهلَك هنا
+         * ولا يُمرَّر. و**صاحب الطلب وحده يسحبه** — راجع
+         * `withdrawSubscriptionCancellation`: طلبٌ يبطله فردٌ آخر في البيت
+         * يفتح تنازعاً صامتاً على قرارٍ ماليّ.
+         */
+        cancellationIsMine: cancellationRequestedByUserId === actor.userId,
         /**
          * ⚠️ `null` لا صفر. الصفر مبلغٌ صحيح («خدمة بلا مقابل»)، و`null`
          * تعني «ليس من شأنك» — والواجهة تعرض الأولى رقماً والثانية شرطة.

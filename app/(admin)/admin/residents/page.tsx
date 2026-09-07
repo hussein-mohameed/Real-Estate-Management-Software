@@ -2,8 +2,10 @@ import { requireRoleOrRedirect } from "@/lib/auth/guard";
 import { one, pageNumber, type SearchParams } from "@/lib/routes/search-params";
 import { listResidents } from "@/lib/actions/residents";
 import { listApartments } from "@/lib/actions/apartments";
+import { listResidentRequests } from "@/lib/actions/resident-requests-review";
 import { formatPhoneForDisplay, whatsappLink } from "@/lib/domain/phone";
 import { RESIDENT_RELATION_AR } from "@/lib/labels";
+import { formatBaghdadDate } from "@/lib/dates";
 import { Ltr } from "@/components/ui/ltr";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { CreateResidentForm } from "./create-form";
+import { ChangeRequestsCard } from "./change-requests";
 import { LinkDialog, UnlinkButton } from "./link-actions";
 
 /**
@@ -45,7 +48,7 @@ export default async function ResidentsPage({
 
   const includeStaff = p["staff"] === "1";
 
-  const [result, apartments] = await Promise.all([
+  const [result, apartments, changeRequests] = await Promise.all([
     listResidents(
       {
         search: one(p["q"]),
@@ -57,6 +60,7 @@ export default async function ResidentsPage({
       actor,
     ),
     listApartments({ page: 1, pageSize: 200 }, actor),
+    listResidentRequests({ status: "PENDING", page: 1 }, actor),
   ]);
 
   if (!result.ok) {
@@ -74,6 +78,41 @@ export default async function ResidentsPage({
     : [];
 
   const canWrite = me.role === "ADMIN";
+
+  /**
+   * ⚠️ **التحويل في الخادم لا في العميل.** الحمولة `Json` — أي `unknown`
+   * فعلياً — وتمريرها خاماً إلى مكوّن عميل يجعله يفكّها بـ`any` أو بحُرّاسٍ
+   * تُكتب مرّتين. هنا تُقرأ مرّةً وتخرج بشكلٍ مُعرَّف.
+   */
+  const FIELD_LABELS: Record<string, string> = {
+    fullName: "الاسم",
+    phone: "الهاتف",
+    emergencyPhone: "هاتف الطوارئ",
+  };
+
+  const pendingChanges = (changeRequests.ok ? changeRequests.data.rows : [])
+    .filter((r) => r.kind === "PROFILE_CHANGE")
+    .map((r) => {
+      const payload = (r.payload ?? {}) as Record<
+        string,
+        { from?: string | null; to?: string } | string | undefined
+      >;
+      const changes = Object.entries(FIELD_LABELS).flatMap(([key, label]) => {
+        const entry = payload[key];
+        if (!entry || typeof entry === "string" || entry.to === undefined) return [];
+        return [{ label, from: entry.from ?? "—", to: entry.to }];
+      });
+      return {
+        id: r.id,
+        createdAt: formatBaghdadDate(r.createdAt),
+        requesterName: r.createdBy.fullName,
+        requesterPhone: formatPhoneForDisplay(r.createdBy.phone),
+        changes,
+        note: typeof payload["note"] === "string" ? payload["note"] : null,
+      };
+    })
+    /* ⚠️ طلبٌ بلا تغيير قابل للعرض لا يُعرَض — صفٌّ بلا محتوى يُقرأ عطلاً */
+    .filter((r) => r.changes.length > 0);
 
   const qs = (patch: Record<string, string | null>) => {
     const out = new URLSearchParams();
@@ -114,6 +153,13 @@ export default async function ResidentsPage({
           </>
         }
       />
+
+      {/*
+        ⚠️ **الطلبات المعلّقة قبل نموذج الإنشاء.** ما ينتظر قراراً يتصدّر
+        ما يُنشأ ابتداءً: البطاقة تختفي كلّياً حين لا طلب، فلا تكلّف شيئاً
+        في اليوم المعتاد وتُرى في اليوم الذي تلزم فيه.
+      */}
+      {canWrite ? <ChangeRequestsCard rows={pendingChanges} /> : null}
 
       {canWrite ? <CreateResidentForm /> : null}
 

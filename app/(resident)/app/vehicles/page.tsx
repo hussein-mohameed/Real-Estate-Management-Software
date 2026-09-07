@@ -1,4 +1,6 @@
-import { Car } from "lucide-react";
+import Link from "next/link";
+import { Car, Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { requireRoleOrRedirect } from "@/lib/auth/guard";
 import { getMyVehicles } from "@/lib/actions/resident-portal";
 import { Ltr } from "@/components/ui/ltr";
@@ -38,14 +40,30 @@ export default async function MyVehiclesPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="سيارتي"
-        description="مركباتك المسجَّلة وباجات الدخول. والتسجيل يجري في الإدارة."
+        description="مركباتك المسجَّلة وباجات الدخول."
+        actions={
+          <Button asChild className="gap-2">
+            <Link href="/app/vehicles/new">
+              <Plus className="size-4" />
+              تسجيل مركبة
+            </Link>
+          </Button>
+        }
       />
 
       {vehicles.length === 0 ? (
         <EmptyState
           icon={Car}
           title="لا مركبات مسجَّلة"
-          description="تسجيل المركبة وإصدار الباج يجريان في إدارة المجمَّع."
+          description="سجّل مركبتك لتدخل البوّابة. تُعتمَد من الإدارة قبل أن تعمل."
+          action={
+            <Button asChild className="gap-2">
+              <Link href="/app/vehicles/new">
+                <Plus className="size-4" />
+                تسجيل مركبة
+              </Link>
+            </Button>
+          }
         />
       ) : (
         <div className="grid gap-4 md:grid-cols-2">

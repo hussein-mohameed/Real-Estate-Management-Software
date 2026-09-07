@@ -25,6 +25,7 @@ import {
   OWNERSHIP_STATUS_AR,
 } from "@/lib/labels";
 import { formatBaghdadDate } from "@/lib/dates";
+import { AddApartmentForm, BulkConstructionForm } from "./forms";
 
 /**
  * جدول الشقق — الخطوة 1.2.
@@ -72,6 +73,17 @@ export default async function ApartmentsPage({
   const { rows, total, page, pageSize } = result.data;
   const pages = Math.max(1, Math.ceil(total / pageSize));
 
+  /** ⚠️ المالك يقرأ ولا يكتب (‏D3/2) — فلا أزرار له بدل أزرار تفشل. */
+  const canAct = me.role === "ADMIN";
+  const buildingOptions = buildings.ok
+    ? buildings.data.rows.map((b) => ({
+        id: b.id,
+        /* الاسم مع الرمز: بنايتان بلا اسم تُقرآن رمزين لا يُميَّزان */
+        label: b.name ? `${b.code} — ${b.name}` : b.code,
+        floorsCount: b.floorsCount,
+      }))
+    : [];
+
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
@@ -82,6 +94,18 @@ export default async function ApartmentsPage({
           </>
         }
       />
+
+      {/*
+        ⚠️ **زرّان مطويّان لا نموذجان مفتوحان.** كلاهما نادر — الشقق
+        تُولَّد مع البناية، والتحديث الجماعي يجري مرّةً كل مرحلة. ونموذجٌ
+        مفتوح دائماً يدفع الجدول تحت الطيّة ويُبطئ العمل اليومي لأجل النادر.
+      */}
+      {canAct && buildingOptions.length > 0 ? (
+        <div className="flex flex-wrap items-start gap-3">
+          <AddApartmentForm buildings={buildingOptions} />
+          <BulkConstructionForm buildings={buildingOptions} />
+        </div>
+      ) : null}
 
       {/* شريط المرشّحات — تشريح صفحة القائمة الثابت (§11.2).
           نموذج GET بلا JavaScript: المرشّحات تعيش في العنوان، فهي قابلة

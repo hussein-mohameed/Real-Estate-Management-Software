@@ -26,15 +26,24 @@
  */
 export type NavIconKey =
   | "dashboard"
-  | "users"
+  | "metrics"
+  | "requests"
   | "buildings"
   | "apartments"
   | "residents"
+  | "staff"
+  | "departments"
+  | "users"
   | "contracts"
   | "services"
-  | "staff"
-  | "tasks"
-  | "wallet"
+  | "subscriptions"
+  | "installments"
+  | "cash"
+  | "statement"
+  | "invoices"
+  | "household"
+  | "vehicles"
+  | "work"
   | "profile";
 
 export interface NavItem {
@@ -59,7 +68,7 @@ export interface NavItem {
   icon: NavIconKey;
 
   /**
-   * عنوان المجموعة التي يقع فيها البند.
+   * عنوان المجموعة التي يقع فيها البند — **أو لا مجموعة**.
    *
    * ⚠️ **ثمانية بنود في قائمة واحدة تُقرأ سطراً سطراً.** الشريط كان
    * كتلةً واحدة تحت عنوان «القائمة» — وهو عنوان لا يقول شيئاً. البحث
@@ -69,14 +78,33 @@ export interface NavItem {
    *
    * البنود المتجاورة في نفس المجموعة **تبقى متجاورة**: الترتيب هنا هو
    * ترتيب العرض، والشريط لا يُعيد فرزه.
+   *
+   * ── ⚠️ وبندٌ وحده يُترك **بلا مجموعة** ─────────────────────────────
+   * كان لكل بند مجموعة إلزاماً، فوُلد عنوانان فوق بندٍ واحد: «حسابي» فوق
+   * «الرئيسية» وحدها، و«حسابي الشخصي» فوق «ملفي» وحده. وعنوانٌ فوق بندٍ
+   * واحد يكلّف سطراً كاملاً ولا يُصنّف شيئاً — التصنيف يبدأ من اثنين.
+   *
+   * فحذفُه ليس اختصاراً بصرياً: أربعة عناوين على تسعة بنود تجعل نصف
+   * الشريط عناوين، فتفقد العناوين وظيفتها — وهي أن تُميّز.
    */
-  group: string;
+  group?: string;
 }
+
+/**
+ * ── ⚠️ أيقونةٌ لكل وجهة، لا أيقونة لكل صنف ──────────────────────────
+ * كانت إحدى عشرة أيقونة تخدم خمساً وعشرين وجهة: `tasks` نفسها على
+ * «الاشتراكات» و«الطلبات» و«الأقسام»، و`wallet` على «كشف حسابي» و«الأقساط»
+ * و«صندوق النقد» — و**بيتٌ على «سيارتي»**.
+ *
+ * والأيقونة المكرّرة أسوأ من غيابها: الغياب يترك العين تقرأ النصّ، والتكرار
+ * يعدها بتمييزٍ ثم يخلفه — فيتعلّم المستخدم تجاهلها ويعود إلى القراءة سطراً
+ * سطراً، وهو بالضبط ما وُجدت الأيقونة لتمنعه.
+ */
 
 /** لوحة الإدارة (‏§9.1). المالك يدخلها للعرض بحكم D3/1. */
 export const ADMIN_NAV: readonly NavItem[] = Object.freeze([
   { group: "المتابعة", icon: "dashboard", href: "/admin", label: "مهام اليوم" },
-  { group: "المتابعة", icon: "tasks", href: "/admin/requests", label: "الطلبات والشكاوى" },
+  { group: "المتابعة", icon: "requests", href: "/admin/requests", label: "الطلبات والشكاوى" },
 
   // الأصول العقارية: ما يُملَك ويُبنى
   { group: "الأصول", icon: "buildings", href: "/admin/buildings", label: "البنايات" },
@@ -85,23 +113,26 @@ export const ADMIN_NAV: readonly NavItem[] = Object.freeze([
   // من يسكن ومن يعمل ومن يدخل النظام
   { group: "الناس", icon: "residents", href: "/admin/residents", label: "السكان" },
   { group: "الناس", icon: "staff", href: "/admin/staff", label: "الموظفون" },
-  { group: "الناس", icon: "tasks", href: "/admin/departments", label: "الأقسام والمهامّ" },
+  { group: "الناس", icon: "departments", href: "/admin/departments", label: "الأقسام والمهامّ" },
   { group: "الناس", icon: "users", href: "/admin/users", label: "المستخدمون" },
+  /* ⚠️ المركبات تحت «الناس» لا تحت «الأصول»: صاحبُها هو الموضوع لا الشيء */
+  { group: "الناس", icon: "vehicles", href: "/admin/vehicles", label: "المركبات" },
 
   // ما يُتعاقَد عليه ويُفوتَر
   { group: "التعاقد", icon: "contracts", href: "/admin/contracts", label: "العقود" },
   { group: "التعاقد", icon: "services", href: "/admin/services", label: "الخدمات" },
-  { group: "التعاقد", icon: "tasks", href: "/admin/subscriptions", label: "الاشتراكات" },
-  { group: "المال", icon: "wallet", href: "/admin/installments", label: "متابعة الأقساط" },
+  { group: "التعاقد", icon: "subscriptions", href: "/admin/subscriptions", label: "الاشتراكات" },
+  { group: "المال", icon: "installments", href: "/admin/installments", label: "متابعة الأقساط" },
 
   // المال — B4 والخطوة 3.1. القبض يحتاج صلاحية صريحة، والشاشة تقول ذلك
   // لمن لا يملكها بدل أن تعرض زرّاً يفشل.
-  { group: "المال", icon: "wallet", href: "/admin/cash", label: "صندوق النقد" },
+  { group: "المال", icon: "cash", href: "/admin/cash", label: "صندوق النقد" },
 ]);
 
 /** لوحة المالك — عرض فقط (‏D3/2). */
 export const OWNER_NAV: readonly NavItem[] = Object.freeze([
-  { group: "المتابعة", icon: "dashboard", href: "/owner", label: "المؤشّرات" },
+  /* ⚠️ بلا مجموعة: «المتابعة» فوق بندٍ واحد عنوانٌ لا يُصنّف شيئاً */
+  { icon: "metrics", href: "/owner", label: "المؤشّرات" },
   // ⚠️ المالك يقرأ شاشات الإدارة نفسها بحكم D3/1، ولا تُبنى له نسخة ثانية
   // منها: نسختان لنفس الجدول تتفرّقان عند أول تعديل.
   { group: "السجلّات", icon: "apartments", href: "/admin/apartments", label: "الشقق" },
@@ -116,30 +147,31 @@ export const STAFF_NAV: readonly NavItem[] = Object.freeze([
  * تعرض ملفّه الوظيفي ومهاراته ومهام قسمه — لا طلبات. والموظف الذي يفتح
  * «طلباتي» فيجد ملفّه يظنّ النظام معطوباً.
  */
-  { group: "عملي", icon: "tasks", href: "/staff", label: "مساحة عملي" },
+  { icon: "work", href: "/staff", label: "مساحة عملي" },
 ]);
 
 /** بوّابة الساكن (‏§8.3). */
 /**
- * ⚠️ **ثلاث مجموعات لا قائمة واحدة.** عشرة بنود متتالية بلا عناوين تُقرأ
- * كوماً، ويصير الوصول إلى «سيارتي» بحثاً بالعين في كل مرّة.
+ * ⚠️ **مجموعتان لا أربع.** «المال» و«بيتي» تُصنّفان سبعة بنود؛ أمّا
+ * «الرئيسية» و«ملفي» فيقف كلٌّ منهما وحده بلا عنوان — راجع تعليق `group`.
  *
  * والترتيب يتبع ما يُفتح كثيراً: المال أوّلاً — الرصيد والفواتير والأقساط
- * هي ما يُسأل عنه شهرياً؛ ثم البيت؛ ثم الحساب الشخصي.
+ * هي ما يُسأل عنه شهرياً؛ ثم البيت؛ والملفّ الشخصي في الذيل، حيث يتوقّعه
+ * المستخدم ولا يُنقر بالخطأ عند القصد إلى ما قبله.
  */
 export const RESIDENT_NAV: readonly NavItem[] = Object.freeze([
-  { group: "حسابي", icon: "dashboard", href: "/app", label: "الرئيسية" },
+  { icon: "dashboard", href: "/app", label: "الرئيسية" },
 
-  { group: "المال", icon: "wallet", href: "/app/account", label: "كشف حسابي" },
-  { group: "المال", icon: "tasks", href: "/app/subscriptions", label: "اشتراكاتي" },
-  { group: "المال", icon: "contracts", href: "/app/invoices", label: "الفواتير" },
-  { group: "المال", icon: "wallet", href: "/app/installments", label: "الأقساط" },
+  { group: "المال", icon: "statement", href: "/app/account", label: "كشف حسابي" },
+  { group: "المال", icon: "subscriptions", href: "/app/subscriptions", label: "اشتراكاتي" },
+  { group: "المال", icon: "invoices", href: "/app/invoices", label: "الفواتير" },
+  { group: "المال", icon: "installments", href: "/app/installments", label: "الأقساط" },
 
-  { group: "بيتي", icon: "residents", href: "/app/household", label: "أفراد الشقة" },
-  { group: "بيتي", icon: "apartments", href: "/app/vehicles", label: "سيارتي" },
-  { group: "بيتي", icon: "tasks", href: "/app/requests", label: "طلباتي وشكاواي" },
+  { group: "بيتي", icon: "household", href: "/app/household", label: "أفراد الشقة" },
+  { group: "بيتي", icon: "vehicles", href: "/app/vehicles", label: "سيارتي" },
+  { group: "بيتي", icon: "requests", href: "/app/requests", label: "طلباتي وشكاواي" },
 
-  { group: "حسابي الشخصي", icon: "profile", href: "/app/profile", label: "ملفي" },
+  { icon: "profile", href: "/app/profile", label: "ملفي" },
 ]);
 
 /** كل القوائم — يقرأها اختبار الاتساق. */

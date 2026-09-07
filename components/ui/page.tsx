@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
@@ -261,5 +262,41 @@ export function Pager({
       pages={Math.max(1, Math.ceil(total / pageSize))}
       params={params}
     />
+  );
+}
+
+/**
+ * رابط ترشيح — الحالة في العنوان كي تُشارَك وتُحفظ في المفضّلة.
+ *
+ * ⚠️ **مستخرَجة إلى هنا عند ثاني مستعمل.** كانت داخل
+ * `admin/subscriptions/page.tsx`، ونسخُها إلى شاشة المركبات كان سيُنتج
+ * شريطَي ترشيح يتفرّقان شكلاً عند أوّل تعديل على أحدهما.
+ *
+ * ── و`Link` لا `<a>` ────────────────────────────────────────────────
+ * ⚠️ النسخة الأصلية كانت `<a>` — أي **إعادة تحميل كاملة** لكل ضغطة
+ * ترشيح في App Router: يُعاد تنفيذ حرّاس التخطيط والجلسة والاستعلامات
+ * كلّها. و`Link` يتنقّل في العميل ويُبقي موضع التمرير.
+ */
+export function FilterLink({
+  label,
+  href,
+  active,
+}: {
+  label: string;
+  href: string;
+  active: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={
+        active
+          ? "rounded-full bg-accent-brand-soft px-3 py-1.5 text-theme-xs font-medium text-accent-brand-strong"
+          : "rounded-full border px-3 py-1.5 text-theme-xs text-muted-foreground transition-colors hover:bg-accent"
+      }
+    >
+      {label}
+    </Link>
   );
 }

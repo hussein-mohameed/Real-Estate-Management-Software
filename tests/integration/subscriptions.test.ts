@@ -5,9 +5,13 @@ import {
   approveSubscription,
   cancelSubscription,
   createSubscription,
+  dismissCancellationRequest,
+  listSubscriptions,
   rejectSubscription,
   requestSubscription,
+  requestSubscriptionCancellation,
   updateSubscriptionQuantity,
+  withdrawSubscriptionCancellation,
 } from "@/lib/actions/subscriptions";
 import type { ActorContext } from "@/lib/actions/define-action";
 import { prisma } from "@/lib/prisma";
@@ -239,6 +243,79 @@ describe("‏R25 — الطلب لا يُنتج قيداً", () => {
     } finally {
       await client.query(`delete from "User" where id = $1`, [stranger]);
     }
+  });
+
+  it("🔴 طلبٌ ثانٍ على خدمة لها طلب معلّق مرفوض", async () => {
+    /*
+     * ── العيب الذي وُجد هذا الفحص من أجله ───────────────────────────
+     * لم يكن في `createPending` حرسٌ ضدّ التكرار، ولا في القاعدة فهرسٌ
+     * فريد. فضغطةٌ مزدوجة على «إرسال الطلب» تُنتج صفّين، يوافق الأدمن
+     * عليهما، **فيُقيَّد المبلغ مرّتين كل دورة**.
+     *
+     * ⚠️ والازدواج لا يُلاحَظ: `B2` يُقسّط الفترة الأولى بالتناسب، فيبدو
+     * اختلافُ المبلغين مبرَّراً.
+     */
+    const first = await requestSubscription(
+      { serviceId: SVC_MONTHLY, subjectType: "APARTMENT", apartmentId: f.apartmentId },
+      resident.userId,
+    );
+    created.push(first.id);
+
+    await expect(
+      requestSubscription(
+        { serviceId: SVC_MONTHLY, subjectType: "APARTMENT", apartmentId: f.apartmentId },
+        resident.userId,
+      ),
+      "قُبل طلبٌ ثانٍ على خدمة لها طلب معلّق",
+    ).rejects.toThrow(/معلّق/);
+  });
+
+  it("🔴 وطلبٌ على خدمة مشترَك بها فعلاً مرفوض", async () => {
+    const first = await requestSubscription(
+      { serviceId: SVC_MONTHLY, subjectType: "APARTMENT", apartmentId: f.apartmentId },
+      resident.userId,
+    );
+    created.push(first.id);
+
+    const approved = await approveSubscription({ subscriptionId: first.id }, admin);
+    expect(approved.ok, approved.ok ? "" : approved.error.message).toBe(true);
+
+    await expect(
+      requestSubscription(
+        { serviceId: SVC_MONTHLY, subjectType: "APARTMENT", apartmentId: f.apartmentId },
+        resident.userId,
+      ),
+      "قُبل اشتراك ثانٍ على خدمة نشطة",
+    ).rejects.toThrow(/سلفاً/);
+  });
+
+  it("والملغى يُطلَب ثانيةً — الإلغاء ليس حظراً", async () => {
+    /*
+     * ⚠️ الحرس يعدّ `ACTIVE` و`PAUSED` و`PENDING_APPROVAL` قائمةً.
+     * و`CANCELLED` **لا**: ساكنٌ ألغى اشتراكه ثم عاد يريده لا سبب لمنعه،
+     * ومنعُه يجعل الإلغاء قراراً لا رجعة فيه بلا أن يقول ذلك لأحد.
+     */
+    const first = await requestSubscription(
+      { serviceId: SVC_MONTHLY, subjectType: "APARTMENT", apartmentId: f.apartmentId },
+      resident.userId,
+    );
+    created.push(first.id);
+
+    const approved = await approveSubscription({ subscriptionId: first.id }, admin);
+    expect(approved.ok, approved.ok ? "" : approved.error.message).toBe(true);
+
+    const cancelled = await cancelSubscription(
+      { subscriptionId: first.id, reason: "بطلب الساكن" },
+      admin,
+    );
+    expect(cancelled.ok, cancelled.ok ? "" : cancelled.error.message).toBe(true);
+
+    const again = await requestSubscription(
+      { serviceId: SVC_MONTHLY, subjectType: "APARTMENT", apartmentId: f.apartmentId },
+      resident.userId,
+    );
+    created.push(again.id);
+    expect(again.id).not.toBe(first.id);
   });
 
   it("⚠️ طلب خدمة شخصية باسم ساكن آخر مرفوض", async () => {
@@ -570,5 +647,248 @@ describe("الإلغاء", () => {
 
     const again = await cancelSubscription({ subscriptionId: id }, admin);
     expect(again.ok).toBe(false);
+  });
+});
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════
+ *  طلب إلغاء الاشتراك — §3.2 «unsubscribe» · §8.4 · الخيار (أ).
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * ── لماذا عمودان على الصفّ لا حالة جديدة ────────────────────────────
+ * `CANCELLATION_REQUESTED` كحالة كانت ستُخرج الاشتراك من كل استعلام يسأل
+ * «هل هو نشط؟» — أي **تُوقف فوترته بمجرّد الطلب**، وهو إلغاءٌ فعليّ بلا
+ * قرار من أحد. العمودان يتركان الحالة `ACTIVE` كما هي.
+ */
+describe("طلب إلغاء الاشتراك", () => {
+  async function activeSubscription(): Promise<string> {
+    const r = await requestSubscription(
+      { serviceId: SVC_MONTHLY, subjectType: "APARTMENT", apartmentId: f.apartmentId },
+      resident.userId,
+    );
+    created.push(r.id);
+    const approved = await approveSubscription({ subscriptionId: r.id }, admin);
+    if (!approved.ok) throw new Error(approved.error.message);
+    return r.id;
+  }
+
+  it("🔴 الطلب **لا يوقف الفوترة** — الحالة تبقى ACTIVE", async () => {
+    const id = await activeSubscription();
+
+    await requestSubscriptionCancellation({ subscriptionId: id }, resident.userId);
+
+    const sub = await prisma.subscription.findUnique({
+      where: { id },
+      select: { status: true, nextChargeDate: true, cancellationRequestedAt: true },
+    });
+
+    /* ⚠️ هذا هو جوهر الخيار (أ): الطلب علمٌ لا قرار */
+    expect(sub!.status, "الطلب غيّر الحالة — أوقف فوترةً بلا قرار").toBe("ACTIVE");
+    expect(sub!.nextChargeDate, "الطلب صفّر موعد الفوترة").not.toBeNull();
+    expect(sub!.cancellationRequestedAt).not.toBeNull();
+  });
+
+  it("⚠️ والطلب مُدقَّق باسم الساكن", async () => {
+    const id = await activeSubscription();
+    await requestSubscriptionCancellation(
+      { subscriptionId: id, reason: "لم أعد بحاجة إليها" },
+      resident.userId,
+    );
+
+    const rows = await prisma.auditLog.findMany({
+      where: { entityId: id, action: "subscription.cancellation_request" },
+      select: { actorUserId: true },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.actorUserId).toBe(resident.userId);
+  });
+
+  it("🔴 الخدمة الإلزامية لا يُطلَب إلغاؤها", async () => {
+    /*
+     * ⚠️ الإلزامية يعيدها الإشغال إن أُلغيت (`mandatory-subscriptions.ts`).
+     * فطلبُ إلغائها يفتح دورةً عبثية: يوافق الأدمن، ثم يعيدها النظام.
+     */
+    await prisma.service.update({
+      where: { id: SVC_MONTHLY },
+      data: { isMandatory: true },
+    });
+    try {
+      const id = await activeSubscription();
+      await expect(
+        requestSubscriptionCancellation({ subscriptionId: id }, resident.userId),
+        "قُبل طلب إلغاء خدمة إلزامية",
+      ).rejects.toThrow(/إلزامية/);
+    } finally {
+      await prisma.service.update({
+        where: { id: SVC_MONTHLY },
+        data: { isMandatory: false },
+      });
+    }
+  });
+
+  it("⚠️ وطلبٌ على اشتراك شقة ليست لي مرفوض", async () => {
+    const id = await activeSubscription();
+    const stranger = testId("u_sub_cx_stranger");
+    await client.query(
+      `insert into "User" (id,"fullName",phone,role,"isActive","updatedAt")
+       values ($1,'ساكن بلا شقة','+9647083000009','RESIDENT',true,now())`,
+      [stranger],
+    );
+    try {
+      await expect(
+        requestSubscriptionCancellation({ subscriptionId: id }, stranger),
+      ).rejects.toThrow(/غير مرتبطة/);
+    } finally {
+      await client.query(`delete from "User" where id = $1`, [stranger]);
+    }
+  });
+
+  it("وطلبٌ مكرّر مرفوض", async () => {
+    const id = await activeSubscription();
+    await requestSubscriptionCancellation({ subscriptionId: id }, resident.userId);
+    await expect(
+      requestSubscriptionCancellation({ subscriptionId: id }, resident.userId),
+    ).rejects.toThrow(/سلفاً/);
+  });
+
+  it("🔴 الردّ يُصفّر الأعمدة الثلاثة — وإلا بقي العلم مرفوعاً أبداً", async () => {
+    const id = await activeSubscription();
+    await requestSubscriptionCancellation(
+      { subscriptionId: id, reason: "غيّرت رأيي" },
+      resident.userId,
+    );
+
+    const dismissed = await dismissCancellationRequest({ subscriptionId: id }, admin);
+    expect(dismissed.ok, dismissed.ok ? "" : dismissed.error.message).toBe(true);
+
+    const sub = await prisma.subscription.findUnique({
+      where: { id },
+      select: {
+        status: true,
+        cancellationRequestedAt: true,
+        cancellationRequestedByUserId: true,
+        cancellationReason: true,
+      },
+    });
+    /* ⚠️ الاشتراك باقٍ — الردّ يلغي **الطلب** لا الاشتراك */
+    expect(sub!.status).toBe("ACTIVE");
+    expect(sub!.cancellationRequestedAt).toBeNull();
+    expect(sub!.cancellationRequestedByUserId).toBeNull();
+    /* وسببٌ بلا تاريخ نصٌّ معلّق لا يعرف قارئُه متى قيل ولا هل هو قائم */
+    expect(sub!.cancellationReason).toBeNull();
+
+    /* وبعد الردّ يُطلَب ثانيةً — الردّ ليس حظراً */
+    await requestSubscriptionCancellation({ subscriptionId: id }, resident.userId);
+  });
+
+  it("🔴 الساكن يسحب طلبه — والأعمدة الثلاثة تُصفَّر", async () => {
+    const id = await activeSubscription();
+    await requestSubscriptionCancellation(
+      { subscriptionId: id, reason: "ضغطتُ بالخطأ" },
+      resident.userId,
+    );
+
+    await withdrawSubscriptionCancellation({ subscriptionId: id }, resident.userId);
+
+    const sub = await prisma.subscription.findUnique({
+      where: { id },
+      select: {
+        status: true,
+        cancellationRequestedAt: true,
+        cancellationRequestedByUserId: true,
+        cancellationReason: true,
+      },
+    });
+    expect(sub!.status).toBe("ACTIVE");
+    expect(sub!.cancellationRequestedAt).toBeNull();
+    expect(sub!.cancellationRequestedByUserId).toBeNull();
+    expect(sub!.cancellationReason).toBeNull();
+
+    /* ⚠️ والسحب ليس حظراً: يُطلَب ثانيةً */
+    await requestSubscriptionCancellation({ subscriptionId: id }, resident.userId);
+  });
+
+  it("⚠️ والسحب مُدقَّق", async () => {
+    const id = await activeSubscription();
+    await requestSubscriptionCancellation({ subscriptionId: id }, resident.userId);
+    await withdrawSubscriptionCancellation({ subscriptionId: id }, resident.userId);
+
+    const rows = await prisma.auditLog.findMany({
+      where: { entityId: id, action: "subscription.cancellation_withdraw" },
+      select: { actorUserId: true },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.actorUserId).toBe(resident.userId);
+  });
+
+  it("🔴 وساكنٌ آخر في نفس الشقة **لا يسحب طلب غيره**", async () => {
+    /*
+     * ── العيب الذي وُجد هذا الفحص من أجله ───────────────────────────
+     * أوّل تنفيذ كان يفحص النطاق وحده — «هل الشقة شقّتك؟». وفي الشقة أكثر
+     * من ساكن، فكان أيُّهم يبطل طلب الآخر بلا أن يعلم أوّلهما.
+     *
+     * ⚠️ وطلب الإلغاء قرارٌ ماليّ على حساب صاحب العقد، لا تفضيلُ واجهة.
+     * ومن أراد إبطال طلب غيره فطريقه الإدارة — ويُدقَّق باسم الأدمن.
+     */
+    const roommate = testId("u_sub_roommate");
+    await client.query(
+      `insert into "User" (id,"fullName",phone,role,"isActive","updatedAt")
+       values ($1,'ساكن ثانٍ في الشقة','+9647083000011','RESIDENT',true,now())`,
+      [roommate],
+    );
+    await client.query(
+      `insert into "ApartmentResident" (id,"apartmentId","userId","relationType","isContractHolder","isActive","movedInAt","updatedAt")
+       values ($1,$2,$3,'FAMILY_MEMBER',false,true,now(),now())`,
+      [testId("ar_roommate"), f.apartmentId, roommate],
+    );
+
+    try {
+      const id = await activeSubscription();
+      await requestSubscriptionCancellation({ subscriptionId: id }, resident.userId);
+
+      await expect(
+        withdrawSubscriptionCancellation({ subscriptionId: id }, roommate),
+        "سحب ساكنٌ طلب غيره",
+      ).rejects.toThrow(/ساكن آخر/);
+
+      /* والطلب باقٍ كما هو */
+      const sub = await prisma.subscription.findUnique({
+        where: { id },
+        select: { cancellationRequestedAt: true },
+      });
+      expect(sub!.cancellationRequestedAt).not.toBeNull();
+    } finally {
+      await client.query(`delete from "ApartmentResident" where "userId" = $1`, [roommate]);
+      await client.query(`delete from "User" where id = $1`, [roommate]);
+    }
+  });
+
+  it("ولا يُسحَب ما لا طلب عليه", async () => {
+    const id = await activeSubscription();
+    await expect(
+      withdrawSubscriptionCancellation({ subscriptionId: id }, resident.userId),
+    ).rejects.toThrow(/لا طلب/);
+  });
+
+  it("ولا يُردّ ما لا طلب عليه", async () => {
+    const id = await activeSubscription();
+    const r = await dismissCancellationRequest({ subscriptionId: id }, admin);
+    expect(r.ok).toBe(false);
+  });
+
+  it("⚠️ ويُرشَّح في شاشة الإدارة — لأن الحالة لا تدلّ عليه", async () => {
+    /*
+     * الاشتراك يبقى `ACTIVE`، فمرشّح الحالة لا يجده. وبلا مرشّح مستقلّ
+     * وعدّاد يبقى الطلب في صفٍّ لا ينظر إليه أحد حتى يشتكي صاحبه.
+     */
+    const id = await activeSubscription();
+    await requestSubscriptionCancellation({ subscriptionId: id }, resident.userId);
+
+    const listed = await listSubscriptions({ cancellationRequested: true }, admin);
+    if (!listed.ok) throw new Error(listed.error.message);
+
+    expect(listed.data.rows.map((r) => r.id)).toContain(id);
+    expect(listed.data.rows.every((r) => r.cancellationRequestedAt !== null)).toBe(true);
+    expect(listed.data.cancellationCount).toBeGreaterThanOrEqual(1);
   });
 });
