@@ -160,33 +160,81 @@ describe("🔴 R8 — حالة السكن تتطلّب عقداً نشطاً م�
   });
 });
 
-describe("🔴 F2 — التاريخ الماضي: قرار غير مُتَّخذ لا تخمين", () => {
-  it("**تاريخ ماضٍ يُرفض بخطأ يسمّي السؤال**", async () => {
+describe("✅ F2 — التاريخ الماضي **توثيقيّ لا رجعيّ** (محسوم 2026-09-08)", () => {
+  /**
+   * ── القرار ───────────────────────────────────────────────────────
+   * الماضي **يُقبَل ويُحفَظ** في `occupancyChangedAt`، والفوترة تبدأ من
+   * اليوم. ⚠️ ولو فوّتر الماضي لأنشأ إشغالٌ بأثر ثلاثة أشهر ثلاثَ دورات
+   * قيود بضغطة — وخطأٌ في خانة التاريخ يُنتج ديناً على ساكن لم يسكن.
+   * والقيد لا يُحذف (‏R29).
+   */
+  it("🔴 التاريخ الماضي يُحفَظ في السجلّ", async () => {
     const past = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
     const r = await setApartmentOccupancy(
       { apartmentId: apt(2), occupancyStatus: "VACANT", effectiveDate: past },
       admin,
     );
-    expect(r.ok).toBe(false);
+    /* الشقة فارغة أصلاً — الرفض هنا لسببٍ آخر، والمهمّ ألّا يكون F2 */
     if (!r.ok) {
-      expect(r.error.code).toBe("PENDING_DECISION");
-      expect(r.error.message).toContain("effectiveDate");
-      expect(r.error.message).toContain("رجعية");
+      expect(r.error.code, "ما زال محجوباً بقرار").not.toBe("PENDING_DECISION");
     }
   });
 
-  it("تاريخ اليوم يعمل — نقبل ما له معنى محدَّد", async () => {
-    await setApartmentConstructionStatus({ apartmentId: apt(2), status: "COMPLETED" }, admin);
+  it("🔴 ولا يُنتج قيوداً عن الفترات الفائتة", async () => {
+    await setApartmentConstructionStatus({ apartmentId: apt(3), status: "COMPLETED" }, admin);
     await client.query(
       `insert into "Contract" (id,"contractNumber","apartmentId","holderUserId",type,status,"startDate","updatedAt")
-       values ('itest_ctr_today','CTR-TD',$1,$2,'SALE','ACTIVE',now(),now())`,
-      [apt(2), f.holderId],
+       values ('itest_ctr_back','CTR-BK',$1,$2,'SALE','ACTIVE',now(),now())`,
+      [apt(3), f.holderId],
     );
+
+    const past = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
     const r = await setApartmentOccupancy(
-      { apartmentId: apt(2), occupancyStatus: "OCCUPIED_BY_OWNER", effectiveDate: new Date() },
+      { apartmentId: apt(3), occupancyStatus: "OCCUPIED_BY_OWNER", effectiveDate: past },
       admin,
     );
     expect(r.ok, r.ok ? "" : r.error.message).toBe(true);
+    if (!r.ok) return;
+
+    /* التاريخ الحقيقي في السجلّ */
+    const { rows } = await client.query<{ changed: string }>(
+      `select "occupancyChangedAt"::date::text changed from "Apartment" where id = $1`,
+      [apt(3)],
+    );
+    expect(rows[0]!.changed).toBe(past.toISOString().slice(0, 10));
+
+    /* والعلم يقول إنه رجعيّ — الشاشة تحتاج قولها للأدمن */
+    expect((r.data as { backdated: boolean }).backdated).toBe(true);
+
+    /*
+     * ⚠️ **الخطّ الحاسم**: قيودٌ لدورةٍ واحدة على الأكثر (الفترة الجارية
+     * بالتناسب — B2)، لا ثلاث دورات عن الأشهر الفائتة.
+     */
+    const entries = await prisma.ledgerEntry.findMany({
+      where: { account: { apartmentId: apt(3) }, type: "CHARGE" },
+      select: { periodStart: true },
+    });
+    for (const e of entries) {
+      expect(
+        e.periodStart === null || e.periodStart >= past,
+        "أُنشئ قيدٌ عن فترة سابقة للتاريخ الرجعيّ",
+      ).toBe(true);
+      expect(
+        e.periodStart === null ||
+          e.periodStart.getTime() >= Date.now() - 40 * 24 * 60 * 60 * 1000,
+        "أُنشئ قيدٌ عن دورة فائتة — الفوترة يجب أن تبدأ من اليوم",
+      ).toBe(true);
+    }
+  });
+
+  it("⚠️ والمستقبل يبقى ممنوعاً", async () => {
+    const future = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const r = await setApartmentOccupancy(
+      { apartmentId: apt(2), occupancyStatus: "OCCUPIED_BY_OWNER", effectiveDate: future },
+      admin,
+    );
+    expect(r.ok, "قُبل تأريخٌ في المستقبل").toBe(false);
+    if (!r.ok) expect(r.error.message).toMatch(/المستقبل/u);
   });
 });
 

@@ -39,6 +39,7 @@ export type NavIconKey =
   | "subscriptions"
   | "installments"
   | "cash"
+  | "reports"
   | "statement"
   | "invoices"
   | "household"
@@ -127,6 +128,7 @@ export const ADMIN_NAV: readonly NavItem[] = Object.freeze([
   // المال — B4 والخطوة 3.1. القبض يحتاج صلاحية صريحة، والشاشة تقول ذلك
   // لمن لا يملكها بدل أن تعرض زرّاً يفشل.
   { group: "المال", icon: "cash", href: "/admin/cash", label: "صندوق النقد" },
+  { group: "المال", icon: "reports", href: "/admin/reports", label: "التقارير" },
 ]);
 
 /** لوحة المالك — عرض فقط (‏D3/2). */

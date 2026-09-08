@@ -56,6 +56,17 @@ const NOT_IN_ANY_NAV = new Set([
   "/app/requests/new", // زرّ «طلب جديد» في شاشة طلبات الساكن وفي حالتها الفارغة
   "/app/subscriptions/new", // زرّ «طلب اشتراك» في شاشة اشتراكات الساكن
   "/app/vehicles/new", // زرّ «تسجيل مركبة» في شاشة سيارات الساكن وفي حالتها الفارغة
+  // ── تقارير المال: تُوصَل من لوحة /admin/reports لا من الشريط ───────
+  // ⚠️ خمسة بنود في الشريط لتقارير تُفتَح شهرياً تدفن ما يُفتَح يومياً.
+  "/admin/reports/collections",
+  "/admin/reports/outstanding",
+  "/admin/reports/installment-ageing",
+  "/admin/reports/service-revenue",
+  "/admin/reports/ledger",
+  "/admin/reports/residents",
+  "/admin/reports/staff",
+  "/admin/reports/requests",
+  "/admin/reports/vehicles",
 ]);
 
 describe("كل رابط في شريط التنقّل يشير إلى صفحة موجودة", () => {

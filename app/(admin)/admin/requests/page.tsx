@@ -100,6 +100,13 @@ export default async function RequestsPage({
             <Badge variant={openCount > 0 ? "warning" : "success"}>
               <span className="tabular">{openCount}</span> مفتوح في هذه الصفحة
             </Badge>
+            {/*
+              ⚠️ يُقال للمالك إنه يقرأ — وإلا بحث عن زرّ «طلب جديد»
+              وعن الإسناد داخل الطلب، وظنّ الشاشة معطوبة.
+            */}
+            {me.role === "OWNER" ? (
+              <Badge variant="neutral">عرضٌ فقط — التشغيل من صلاحية الأدمن</Badge>
+            ) : null}
           </span>
         }
       />

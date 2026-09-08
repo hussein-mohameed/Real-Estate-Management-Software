@@ -420,9 +420,8 @@ describe("تعميم خدمة إلزامية جديدة", () => {
 describe("‏F2 — التاريخ الماضي ما زال محجوباً", () => {
   it("⚠️ إشغال بأثر رجعي يُرفض ويسمّي القرار", async () => {
     /**
-     * `F2` لم يُحسم: هل إعلان إشغال بأثر رجعي ثلاثة أشهر يُنتج ثلاث دورات
-     * فوترة أم صفراً؟ ولا نختار له دلالة. وحسمُ `B2` **لا يحسمه** — هما
-     * سؤالان مختلفان.
+     * ✅ `F2` محسوم 2026-09-08: الماضي **توثيقيّ**. يُقبَل ويُحفَظ، ولا
+     * يُنتج فوترةً عن الفترات الفائتة — الفوترة تبدأ من اليوم.
      */
     const past = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
     const r = await setApartmentOccupancy(
@@ -433,13 +432,29 @@ describe("‏F2 — التاريخ الماضي ما زال محجوباً", () 
       },
       admin,
     );
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    expect(r.error.message).toMatch(/F2|رجعي|ماضٍ|ماضي/);
+    expect(r.ok, r.ok ? "" : r.error.message).toBe(true);
+    if (!r.ok) return;
 
-    // ولا اشتراك أُنشئ على الطريق
-    expect(
-      await prisma.subscription.count({ where: { apartmentId: f.apartmentId } }),
-    ).toBe(0);
+    /* الاشتراكات تُنشأ — القرار لم يكن يمنعها بل يمنع تأريخها رجعياً */
+    const subs = await prisma.subscription.count({
+      where: { apartmentId: f.apartmentId },
+    });
+    expect(subs).toBeGreaterThan(0);
+
+    /*
+     * ⚠️ والقيود من **اليوم** لا من قبل ثلاثة أشهر: `B2` يُقسّط الفترة
+     * الجارية بالتناسب، ولو مرّ التاريخ الرجعيّ لقسّم من فترةٍ فائتة.
+     */
+    const oldest = await prisma.ledgerEntry.findFirst({
+      where: { account: { apartmentId: f.apartmentId }, type: "CHARGE" },
+      select: { periodStart: true },
+      orderBy: { createdAt: "asc" },
+    });
+    if (oldest?.periodStart) {
+      expect(
+        oldest.periodStart.getTime(),
+        "قُيّدت فترة فائتة رغم أن F2 توثيقيّ",
+      ).toBeGreaterThan(past.getTime());
+    }
   });
 });

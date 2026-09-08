@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import { defineAction } from "./define-action";
-import { BusinessRuleError, NotFoundError, PendingDecisionError } from "@/lib/errors";
+import { BusinessRuleError, NotFoundError } from "@/lib/errors";
 import {
   CONSTRUCTION_STATUS,
   OCCUPANCY_STATUS,
@@ -386,14 +386,39 @@ export const setApartmentOccupancy = defineAction({
       }
     }
 
-    // ── ⚠️ التاريخ الماضي: قرار غير مُتَّخذ، لا تخمين ─────────────────
+    /**
+     * ── ✅ `F2` محسوم 2026-09-08 — **توثيقيّ لا رجعيّ** ────────────────
+     *
+     * التاريخ الماضي **يُقبَل ويُحفَظ** في `occupancyChangedAt`، ولا يُنتج
+     * قيوداً عن الفترات الفائتة. الفوترة تبدأ من **اليوم**.
+     *
+     * ⚠️ ولماذا لا يُفوتِر الماضي: إشغالٌ بأثر رجعي ثلاثة أشهر كان
+     * سيُنشئ ثلاث دورات قيود **بضغطة واحدة** — وخطأٌ في خانة التاريخ
+     * يُنتج ديناً كبيراً على ساكنٍ لم يسكن. والقيد لا يُحذف (‏R29)،
+     * فتصحيحه يحتاج تسوية معاكسة تحتاج موافقة المالك (‏B5).
+     *
+     * ومن أراد تحميل الفترات الفائتة فعلاً يُدخلها **تسويةً صريحة**:
+     * فعلٌ يُقرَّر مرّةً بمبلغه المعلوم، لا أثرٌ جانبيّ لحقل تاريخ.
+     *
+     * ── ⚠️ ولذلك **تاريخان** لا واحد ──────────────────────────────────
+     *   • `effective`  ← ما جرى فعلاً — يُكتب في السجلّ
+     *   • `billingFrom` ← من أين تبدأ الفوترة — اليوم دائماً
+     *
+     * ودمجُهما في متغيّر واحد هو بالضبط ما يُعيد السؤال: يمرّ الماضي إلى
+     * `generateMandatorySubscriptions` فيُقسّط `B2` بالتناسب من تاريخٍ فائت.
+     */
     const effective = input.effectiveDate ?? now();
-    if (startOfDayBaghdad(effective) < startOfDayBaghdad(now())) {
-      throw new PendingDecisionError(
-        "effectiveDate",
-        "تأريخ تغيير السكن في الماضي — هل يُنتج قيود فوترة رجعية للفترات الفائتة أم أنه توثيقي فقط؟",
+    const today = startOfDayBaghdad(now());
+    const isBackdated = startOfDayBaghdad(effective) < today;
+
+    /* المستقبل يبقى ممنوعاً: فوترةٌ تبدأ قبل أن تقع الواقعة */
+    if (startOfDayBaghdad(effective) > today) {
+      throw new BusinessRuleError(
+        "لا يُؤرَّخ تغيير السكن في المستقبل — سجّله يوم وقوعه.",
       );
     }
+
+    const billingFrom = isBackdated ? now() : effective;
 
     if (apartment.occupancyStatus === input.occupancyStatus) {
       throw new BusinessRuleError("الشقة في هذه الحالة أصلاً.");
@@ -423,7 +448,7 @@ export const setApartmentOccupancy = defineAction({
 
     if (input.occupancyStatus === "VACANT") {
       // الإخلاء: إيقاف مؤقّت لا إلغاء، **والرصيد يبقى مستحقاً**.
-      ({ paused } = await pauseRecurringOnVacancy(tx, apartment.id, effective));
+      ({ paused } = await pauseRecurringOnVacancy(tx, apartment.id, billingFrom));
     } else {
       /**
        * الإشغال: إنشاء الإلزامية.
@@ -432,10 +457,14 @@ export const setApartmentOccupancy = defineAction({
        * الساكن الجديد قد لا يريد ما أراده السابق، والاستئناف الصامت
        * يُنتج فاتورة لخدمة لم يطلبها أحد.
        */
-      mandatory = await generateMandatorySubscriptions(tx, apartment.id, effective);
+      mandatory = await generateMandatorySubscriptions(tx, apartment.id, billingFrom);
     }
 
-    return { ...updated, mandatory, pausedSubscriptions: paused };
+    /*
+     * ⚠️ `backdated` يخرج في الجواب: الشاشة يجب أن تقول «سُجّل بتاريخ
+     * كذا ولم تُفوتَر الفترة الفائتة» — وإلا ظنّ الأدمن أن القيود أُنشئت.
+     */
+    return { ...updated, mandatory, pausedSubscriptions: paused, backdated: isBackdated };
   },
 });
 

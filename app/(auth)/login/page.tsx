@@ -3,6 +3,7 @@ import { signInWithGoogle } from "./actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { OtpLoginForm } from "./otp-form";
 
 /**
  * شاشة الدخول (‏§7.1 · §10.1).
@@ -76,17 +77,18 @@ export default async function LoginPage({
 
           <Separator />
 
+          {/*
+            ✅ **بُني** — كان هنا وعدٌ بالخطوة 0.9. والوعد في الشاشة أسوأ
+            من غيابه: الساكن يقرأ «تدخل برقمك» ولا يجد حقلاً يكتبه فيه.
+          */}
           <div className="flex items-start gap-3 rounded-lg bg-muted p-3">
             <ShieldCheck className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
-            <div className="space-y-1 text-sm">
-              <p className="text-muted-foreground">
-                السكان يدخلون برقم الهاتف عبر رمز يصل على واتساب.
-              </p>
-              <p className="text-xs text-muted-foreground">
-                يُبنى في الخطوة 0.9 — ويحتاج بيانات اعتماد UltraMsg.
-              </p>
-            </div>
+            <p className="text-sm text-muted-foreground">
+              السكان يدخلون برقم الهاتف — يصل الرمز على واتساب.
+            </p>
           </div>
+
+          <OtpLoginForm />
         </CardContent>
       </Card>
     </main>

@@ -64,14 +64,26 @@ export interface ReportRange {
 /** يوم واحد بالمللي — تُستعمل للإزاحة داخل هذا الملفّ وحده. */
 const DAY_MS = 86_400_000;
 
-/** بداية اليوم التالي في بغداد — الحدّ الأعلى المفتوح. */
+/**
+ * بداية اليوم الذي يبعد `days` عن يوم `instant`، بحدود بغداد.
+ *
+ * ── ⚠️ ولماذا **زائد** نصف يوم دائماً ───────────────────────────────
+ * `‏base ± n×24h` قد يقع على الساعة `23:00` من اليوم السابق أو `01:00`
+ * من التالي لو تغيّرت الإزاحة الزمنية في تلك الليلة. وإضافةُ اثنتي عشرة
+ * ساعة **بعد** الإزاحة تضع اللحظة في منتصف اليوم المقصود، فيصحّ التصفير
+ * أياً كان الطرف الذي وقعت عليه.
+ *
+ * ⚠️ وكتبتُها أوّلاً بطرح نصف يوم في حالة «آخر 7 أيام» — فرجعت ثمانية.
+ * والمزيح الواحد يمنع تكرار هذا الخطأ في كل حالة على حدة.
+ */
+function dayStart(instant: Date, days: number): Date {
+  const base = startOfDayBaghdad(instant).getTime();
+  return startOfDayBaghdad(new Date(base + days * DAY_MS + DAY_MS / 2));
+}
+
+/** بداية اليوم التالي — الحدّ الأعلى المفتوح. */
 function nextDayStart(instant: Date): Date {
-  /*
-   * ⚠️ إضافة 24 ساعة ثم تصفير اليوم — لا `day + 1` مباشرةً: الأخير يكسر
-   * عند آخر يوم في الشهر. والتصفير يعيد الحساب بحدود بغداد فيصحّ حتى لو
-   * تغيّرت الإزاحة في تلك الليلة.
-   */
-  return startOfDayBaghdad(new Date(startOfDayBaghdad(instant).getTime() + DAY_MS + DAY_MS / 2));
+  return dayStart(instant, 1);
 }
 
 /** `YYYY-MM-DD` ← بداية ذلك اليوم في بغداد، أو `null` إن لم يكن تاريخاً. */
@@ -129,16 +141,12 @@ export function resolveRange(
     case "today":
       return { from: todayStart, to: tomorrow, preset };
 
-    case "yesterday": {
-      const yStart = startOfDayBaghdad(new Date(todayStart.getTime() - DAY_MS / 2));
-      return { from: yStart, to: todayStart, preset };
-    }
+    case "yesterday":
+      return { from: dayStart(reference, -1), to: todayStart, preset };
 
-    case "week": {
+    case "week":
       /* ⚠️ «آخر 7 أيام» شاملةً اليوم — لا أسبوعٌ تقويميّ يبدأ بيوم يختلف عليه الناس */
-      const start = startOfDayBaghdad(new Date(todayStart.getTime() - 6 * DAY_MS - DAY_MS / 2));
-      return { from: start, to: tomorrow, preset };
-    }
+      return { from: dayStart(reference, -6), to: tomorrow, preset };
 
     case "prevMonth": {
       const thisMonth = startOfMonthBaghdad(reference);
